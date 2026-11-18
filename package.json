@@ -1,0 +1,21 @@
+{
+  "name": "cod-return-guard",
+  "version": "1.0.0",
+  "description": "Score Indian D2C COD orders for return risk before they ship. Plain code + exactly one LLM call (address quality).",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node test/seed-check.js && node test/llm-path.js"
+  },
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.10.0",
+    "express": "^5.3.0"
+  }
+}

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>COD Return Guard</title>
+<style>
+  :root {
+    --bg:#f5f6f8; --card:#fff; --ink:#1b2430; --muted:#64708a; --line:#e3e7ee; --accent:#2f5bea;
+    --low:#127a43; --low-bg:#dff5e8; --med:#8a5a00; --med-bg:#fff0cc; --high:#b3261e; --high-bg:#fde0de;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f141b; --card:#18202b; --ink:#e7ecf3; --muted:#98a4b8; --line:#2a3544; --accent:#7b9bff;
+      --low:#5fd493; --low-bg:#12331f; --med:#f1c25a; --med-bg:#3a2d0c; --high:#ff8b83; --high-bg:#401a18; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:14px 20px; background:var(--card); border-bottom:1px solid var(--line); }
+  h1 { font-size:18px; margin:0; } h1 span { color:var(--muted); font-weight:400; font-size:13px; margin-left:8px; }
+  h2 { font-size:15px; margin:0 0 10px; } h3 { font-size:13px; margin:0 0 6px; }
+  main { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(320px,1fr); gap:16px; padding:16px 20px; align-items:start; }
+  @media (max-width:980px){ main { grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:99px; font-size:12px; font-weight:600; }
+  .mode-llm { background:var(--low-bg); color:var(--low); } .mode-demo { background:var(--med-bg); color:var(--med); }
+  .LOW { background:var(--low-bg); color:var(--low); } .MEDIUM { background:var(--med-bg); color:var(--med); } .HIGH { background:var(--high-bg); color:var(--high); }
+  .st { background:var(--bg); color:var(--ink); border:1px solid var(--line); }
+  .st.SHIPPED { color:var(--low); } .st.HOLD { color:var(--high); } .st.AWAITING_CONFIRMATION { color:var(--med); } .st.CANCELLED { color:var(--muted); text-decoration:line-through; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; font-size:12px; color:var(--muted); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--line); }
+  td { padding:9px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tbody tr { cursor:pointer; } tbody tr:hover { background:var(--bg); } tbody tr.sel { background:var(--bg); outline:2px solid var(--accent); outline-offset:-2px; }
+  td.addr { max-width:230px; color:var(--muted); } td.reasons { max-width:240px; font-size:12px; }
+  .tablewrap { overflow-x:auto; }
+  button { font:inherit; padding:6px 12px; border-radius:7px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
+  button:hover { border-color:var(--accent); } button:disabled { opacity:.45; cursor:not-allowed; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; } button.danger { color:var(--high); }
+  .row { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
+  .step { border-left:3px solid var(--line); padding:2px 0 2px 10px; margin:10px 0; }
+  .step .n { color:var(--muted); font-size:12px; } .tag { font-size:11px; color:var(--muted); }
+  .kv { color:var(--muted); font-size:12px; }
+  pre.wa { white-space:pre-wrap; background:#dcf8c6; color:#111; padding:10px 12px; border-radius:10px; margin:6px 0; font:13px/1.45 system-ui,sans-serif; }
+  .notice { background:var(--med-bg); color:var(--med); padding:8px 10px; border-radius:8px; margin:8px 0; font-size:13px; }
+  .events { font-size:12px; color:var(--muted); padding-left:16px; margin:6px 0 0; }
+  form.grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; } form.grid .full { grid-column:1/-1; }
+  label { font-size:12px; color:var(--muted); display:block; } input, textarea { width:100%; font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink); }
+  details summary { cursor:pointer; font-weight:600; } .err { color:var(--high); font-size:13px; }
+  .muted { color:var(--muted); } footer { padding:6px 20px 24px; color:var(--muted); font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>COD Return Guard <span>score COD orders before they ship</span></h1>
+  <div><span id="mode" class="pill"></span> <button id="reset">Reset demo data</button></div>
+</header>
+
+<main>
+  <section>
+    <div class="card">
+      <h2>Order queue</h2>
+      <div class="tablewrap">
+      <table>
+        <thead><tr><th>Order</th><th>Buyer</th><th>Pin</th><th>Address</th><th>Risk</th><th>Reasons</th><th>Status</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <details>
+        <summary>Simulate a new COD order</summary>
+        <form id="newOrder" class="grid" style="margin-top:10px">
+          <div><label>Buyer name</label><input name="buyer_name" required value="Neha Gupta"></div>
+          <div><label>Phone (known demo buyers: 9810000001-6)</label><input name="phone" value="9999900000"></div>
+          <div><label>Pin code</label><input name="pin" required pattern="[1-9][0-9]{5}" value="560034"></div>
+          <div><label>City (display only - never used in scoring)</label><input name="city" value="Bengaluru"></div>
+          <div class="full"><label>Delivery address (free text)</label><textarea name="address" rows="2" required>Flat 7B, Lake View Residency, 12th Main Road, HSR Layout, Bengaluru 560102</textarea></div>
+          <div><label>Product</label><input name="product" value="Cotton kurta"></div>
+          <div><label>Amount (Rs)</label><input name="amount" type="number" value="1200"></div>
+          <div class="full row"><button class="primary" type="submit">Score &amp; route order</button><span id="newErr" class="err"></span></div>
+        </form>
+      </details>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>Seller rules</h2>
+      <p class="muted" style="margin-top:0">There is no rules engine. Every order is scored on its own signals; blanket group rules are refused. Try one:</p>
+      <form id="ruleForm" class="row"><input id="ruleText" style="flex:1;min-width:200px" placeholder='e.g. Block all buyers from Jaipur'><button type="submit">Submit rule</button></form>
+      <div id="rules"></div>
+    </div>
+  </section>
+
+  <aside class="card" id="detail"><p class="muted">Select an order to see each pipeline step.</p></aside>
+</main>
+<footer>Baseline: ~37.5% of COD orders are returned vs ~5.3% prepaid; a return costs about Rs 350 on a Rs 1,200 order. Demo data is illustrative. The WhatsApp send is a mock - nothing is sent.</footer>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+let orders = [], selected = null, meta = {};
+
+async function api(path, opts) {
+  const r = await fetch(path, opts && { ...opts, headers: { 'content-type': 'application/json' }, body: opts.body && JSON.stringify(opts.body) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(data.error || data.message || r.statusText), { data });
+  return data;
+}
+
+async function load() {
+  meta = await api('/api/meta');
+  $('#mode').className = 'pill ' + (meta.mode === 'llm' ? 'mode-llm' : 'mode-demo');
+  $('#mode').textContent = meta.mode === 'llm' ? `Address check: LLM (${meta.model})` : 'Demo mode: rule-based address check';
+  orders = await api('/api/orders');
+  render();
+  loadRules();
+}
+
+function render() {
+  $('#rows').innerHTML = orders.map((o) => `
+    <tr data-id="${esc(o.id)}" class="${o.id === selected ? 'sel' : ''}">
+      <td><b>${esc(o.id)}</b></td><td>${esc(o.buyer_name)}</td><td>${esc(o.pin)}</td>
+      <td class="addr">${esc(o.address)}</td>
+      <td><span class="pill ${o.risk}">${o.risk}</span></td>
+      <td class="reasons">${o.reasons.map(esc).join('<br>')}</td>
+      <td><span class="pill st ${o.status}">${esc(o.status.replace('_', ' '))}</span>${o.overridden ? ' <span class="tag">overridden</span>' : ''}</td>
+    </tr>`).join('');
+  document.querySelectorAll('#rows tr').forEach((tr) => tr.onclick = () => { selected = tr.dataset.id; render(); });
+  const o = orders.find((x) => x.id === selected);
+  o ? renderDetail(o) : ($('#detail').innerHTML = '<p class="muted">Select an order to see each pipeline step.</p>');
+}
+
+function renderDetail(o) {
+  const p = o.steps.pin_check, h = o.steps.history, a = o.steps.address_check, s = o.steps.score;
+  const done = o.status === 'SHIPPED' || o.status === 'CANCELLED';
+  const canReply = o.whatsapp && !done;
+  $('#detail').innerHTML = `
+    <h2>${esc(o.id)} · ${esc(o.buyer_name)} <span class="pill ${o.risk}">${o.risk}</span> <span class="pill st ${o.status}">${esc(o.status.replace('_', ' '))}</span></h2>
+    <div class="kv">${esc(o.product)} · Rs ${esc(o.amount)} · ${esc(o.city || '-')} · phone ${esc(o.phone)}</div>
+    <div class="kv">Address: ${esc(o.address)}</div>
+    ${o.policy_notice ? `<div class="notice"><b>Seller request refused:</b> "${esc(o.policy_notice.request)}"<br>${esc(o.policy_notice.message)}</div>` : ''}
+
+    <div class="step"><div class="n">Step 1 · Pin-code check <span class="tag">plain code</span></div>
+      <b>${esc(p.risk.toUpperCase())}</b> pin risk - ${esc(p.note)}</div>
+    <div class="step"><div class="n">Step 2 · Buyer's past returns <span class="tag">plain code</span></div>
+      ${esc(h.note)} <span class="kv">(${h.past_returns} / ${h.past_orders})</span></div>
+    <div class="step"><div class="n">Step 3 · Address quality <span class="tag">${a.source === 'llm' ? 'LLM call (' + esc(meta.model) + ')' : 'rule-based fallback'}</span></div>
+      <b>${esc(a.address_quality.toUpperCase())}</b> - ${esc(a.reason)}
+      ${a.fallback_reason ? `<div class="kv">${esc(a.fallback_reason)}</div>` : ''}</div>
+    <div class="step"><div class="n">Step 4 · Final score <span class="tag">plain code</span></div>
+      <span class="pill ${s.level}">${s.level}</span> <span class="kv">${esc(s.rule)}</span>
+      <ul style="margin:6px 0 0;padding-left:18px">${s.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul></div>
+    <div class="step"><div class="n">Step 5 · WhatsApp confirmation <span class="tag">plain code · mock send</span></div>
+      ${o.whatsapp ? `<pre class="wa">${esc(o.whatsapp)}</pre>` : '<span class="muted">Not needed for LOW risk.</span>'}
+      ${o.buyer_reply ? `<div class="kv">Buyer reply: <b>${esc(o.buyer_reply)}</b></div>` : ''}</div>
+    <div class="step"><div class="n">Step 6 · Ship or hold</div>
+      Status: <b>${esc(o.status.replace('_', ' '))}</b>. LOW ships automatically; HIGH or no-reply/cancel goes to HOLD. Nothing is cancelled automatically.</div>
+
+    <h3>Seller decision</h3>
+    <div class="row">
+      <button class="primary" data-a="ship" ${done ? 'disabled' : ''}>Ship</button>
+      <button data-a="hold" ${done ? 'disabled' : ''}>Hold</button>
+      <button data-a="override" ${o.status === 'CANCELLED' ? 'disabled' : ''}>Override…</button>
+    </div>
+    <h3>Simulate buyer reply</h3>
+    <div class="row">
+      <button data-r="confirm" ${canReply ? '' : 'disabled'}>Confirm</button>
+      <button data-r="paid" ${canReply ? '' : 'disabled'}>Paid Rs ${meta.commitment_fee_rs}</button>
+      <button class="danger" data-r="cancel" ${canReply ? '' : 'disabled'}>Cancel</button>
+      <button data-r="no_reply" ${canReply ? '' : 'disabled'}>No reply</button>
+    </div>
+    <div id="actErr" class="err"></div>
+    <h3>Audit log</h3>
+    <ul class="events">${o.events.map((e) => `<li>${esc(new Date(e.ts).toLocaleTimeString())} - ${esc(e.text)}</li>`).join('')}</ul>`;
+
+  $('#detail').querySelectorAll('[data-a]').forEach((b) => b.onclick = () => act(o.id, b.dataset.a));
+  $('#detail').querySelectorAll('[data-r]').forEach((b) => b.onclick = () => mutate(`/api/orders/${o.id}/reply`, { reply: b.dataset.r }));
+}
+
+async function mutate(path, body) {
+  try { await api(path, { method: 'POST', body }); orders = await api('/api/orders'); render(); }
+  catch (e) { const el = $('#actErr'); if (el) el.textContent = e.message; }
+}
+
+function act(id, action) {
+  if (action !== 'override') return mutate(`/api/orders/${id}/action`, { action });
+  const to = (prompt('Override to: ship, hold or cancel?', 'ship') || '').trim().toLowerCase();
+  if (!to) return;
+  const note = prompt('Why are you overriding the system? (required, kept in the audit log)');
+  if (note === null) return;
+  mutate(`/api/orders/${id}/action`, { action: 'override', to, note });
+}
+
+$('#newOrder').onsubmit = async (e) => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target));
+  $('#newErr').textContent = '';
+  try { const o = await api('/api/orders', { method: 'POST', body }); selected = o.id; orders = await api('/api/orders'); render(); }
+  catch (err) { $('#newErr').textContent = err.message; }
+};
+
+async function loadRules() {
+  const list = await api('/api/seller-rules');
+  $('#rules').innerHTML = list.length ? list.map((r) => `<div class="notice"><b>Refused:</b> "${esc(r.text)}"<br>${esc(r.message)}</div>`).join('') : '';
+}
+$('#ruleForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const text = $('#ruleText').value.trim(); if (!text) return;
+  try { await api('/api/seller-rules', { method: 'POST', body: { text } }); } catch { /* 422 is the expected refusal */ }
+  $('#ruleText').value = ''; loadRules();
+};
+$('#reset').onclick = async () => { await api('/api/reset', { method: 'POST' }); selected = null; load(); };
+load();
+</script>
+</body>
+</html>
