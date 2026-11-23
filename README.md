@@ -78,7 +78,7 @@ The page is labelled throughout as a shared sandbox with fake data only and no r
 
 Each order gets a 192-bit random token (24 random bytes, base64url), persisted with the order.
 - **Bearer link:** the link is a bearer capability. Anyone holding it can view the narrow buyer page and record buyer evidence for that one order.
-- **What the buyer sees:** brand, product, value, address, band, pay-now amount, balance at delivery, the ladder and the requested action. They never see tenant IDs, scores, reasons, events, phone or decisions, and no order lists are exposed.
+- **What the buyer sees:** brand, product, value, address, risk score (/100) beside the named band, pay-now amount, balance at delivery, the ladder and the requested action. They never see tenant IDs, scores, reasons, events, phone or decisions, and no order lists are exposed.
 - **What the buyer can do:** confirm; fix the address, which re-scores and is audited but keeps any human decision (max 3 corrections); or make a simulated payment.
 - **Edge cases:** an invalid token returns 404, and cancelled orders are read-only (409 on writes).
 - **Headers:** responses send `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
@@ -88,6 +88,7 @@ Each order gets a 192-bit random token (24 random bytes, base64url), persisted w
 - **Full online:** 5% off, offered for the EXTREME band only. The server rejects it for other bands.
 - **Records:** the backend stores the payment type, amount, discount and balance, marked `simulated: true`. A repeat payment returns the recorded payment instead of recording a second one.
 - **Messaging:** success messages say the seller still reviews the order. They never promise shipment.
+- **After a payment is recorded,** nothing asks for payment again. The buyer page shows "Amount paid (demo)", "Due now ₹0", the balance at delivery and the original upfront request. The dashboard shows "paid (demo) · due now ₹0". `pay_now_rs` becomes 0 and `paid_rs` holds the recorded amount. The buyer message acknowledges the payment, and no reminder is generated.
 
 **Message links.** Messages and reminders link to the real buyer URL built from a trusted base: `PUBLIC_BASE_URL`, then `RENDER_EXTERNAL_URL`, then the request origin (local development). The full-online option is mentioned only for EXTREME orders. The dashboard shows **Open buyer page** beside the manual **Send on WhatsApp** link. Nothing is ever sent automatically.
 

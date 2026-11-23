@@ -25,7 +25,9 @@ function miniLadder(v) {
   return `<ul class="mini-ladder" aria-label="Fee ladder">${v.ladder.map((r) => `<li class="band-${r.band}${r.band === v.risk_band ? ' active' : ''}"><b>${r.min}–${r.max}</b><span>${esc(r.label)} · ${r.fee_rs ? 'upfront, adjusted at delivery' : r.band === 'MEDIUM' ? 'free confirmation' : 'nothing to do'}</span><b>${money(r.fee_rs)}</b></li>`).join('')}</ul>`;
 }
 function requestText(v) {
-  if (v.payment) return v.payment.type === 'full_online' ? `Paid in full online (simulated). Nothing due at delivery.` : `Upfront ${money(v.payment.amount_rs)} recorded (simulated). Pay ${money(v.payment.balance_due_rs)} at delivery.`;
+  if (v.payment) return v.payment.type === 'full_online'
+    ? `Your demo full online payment of ${money(v.payment.amount_rs)} is recorded (no money collected). Nothing is due now or at delivery.`
+    : `Your demo upfront payment of ${money(v.payment.amount_rs)} is recorded (no money collected). Nothing more is due now; ${money(v.payment.balance_due_rs)} remains due at delivery.`;
   if (v.requested_action === 'pay_upfront') return `Please pay ${money(v.upfront_fee_rs)} upfront. It is adjusted against your delivery amount: you then pay ${money(v.balance_at_delivery_rs)} at the door.`;
   if (v.requested_action === 'confirm') return 'Please confirm your order. There is nothing to pay now.';
   return v.payment_mode === 'prepaid' ? 'This order is prepaid. Nothing to do.' : 'Nothing to do. The seller reviews your order before dispatch.';
@@ -43,10 +45,12 @@ function render() {
     ${flash ? `<div class="buyer-card success" id="flash"><b>${esc(flash)}</b></div>` : ''}
     ${v.read_only ? `<div class="buyer-card"><h2>Read only</h2><p>${esc(v.status_message)}</p></div>` : ''}
     ${cod ? `<div class="buyer-card band-${esc(v.risk_band)}" id="amounts">
-      <h2>What we ask</h2>
+      <h2>${v.payment ? 'Your payment (demo)' : 'What we ask'}</h2>
       <p id="requestText">${esc(requestText(v))}</p>
-      <div class="kv-grid"><div><span>Pay now</span><b id="payNow">${money(v.pay_now_rs)}</b></div><div><span>Balance at delivery</span><b id="balance">${money(v.balance_at_delivery_rs)}</b></div></div>
-      <p class="hint" style="margin:6px 0 0">Order band: <b>${esc(v.risk_band_label)}</b>. The store's fee ladder:</p>
+      <div class="kv-grid">${v.payment
+        ? `<div><span>Amount paid (demo)</span><b id="paidAmt">${money(v.paid_rs)}</b></div><div><span>Due now</span><b id="payNow">${money(v.pay_now_rs)}</b></div><div><span>Balance at delivery</span><b id="balance">${money(v.balance_at_delivery_rs)}</b></div>${v.payment.type === 'upfront' ? `<div><span>Original upfront request</span><b id="origFee">${money(v.upfront_fee_rs)}</b></div>` : `<div><span>Saved (5% off)</span><b>${money(v.payment.discount_rs)}</b></div>`}`
+        : `<div><span>Pay now</span><b id="payNow">${money(v.pay_now_rs)}</b></div><div><span>Balance at delivery</span><b id="balance">${money(v.balance_at_delivery_rs)}</b></div>`}</div>
+      <p class="hint" style="margin:6px 0 0" id="bandLine">Order band: <b>${esc(v.risk_band_label)}</b> · risk score <b>${v.risk_score}/100</b>. The store's fee ladder:</p>
       ${miniLadder(v)}
       <div class="buyer-actions">
         ${v.can_pay ? `<button class="primary" id="payUpfront">Pay ${money(v.upfront_fee_rs)} upfront <span class="demo-tag">DEMO</span></button>` : ''}

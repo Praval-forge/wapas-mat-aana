@@ -48,7 +48,7 @@ async function otherTenant(name = 'Other Brand') {
   const k = await (await post(`/admin/api/tenants/${t.id}/keys`, { kind: 'live' }, AH)).json();
   return { tenant: t, key: k.key };
 }
-const BUYER_VIEW_KEYS = ['address', 'balance_at_delivery_rs', 'brand_name', 'buyer_first_name', 'can_confirm', 'can_fix_address', 'can_pay', 'demo', 'full_online', 'ladder', 'notice', 'order_ref', 'order_value_rs', 'pay_now_rs', 'payment', 'payment_mode', 'product', 'read_only', 'requested_action', 'risk_band', 'risk_band_label', 'status_message', 'upfront_fee_rs', 'upi_apps', 'your_reply'];
+const BUYER_VIEW_KEYS = ['address', 'balance_at_delivery_rs', 'brand_name', 'buyer_first_name', 'can_confirm', 'can_fix_address', 'can_pay', 'demo', 'full_online', 'ladder', 'notice', 'order_ref', 'order_value_rs', 'paid_rs', 'pay_now_rs', 'payment', 'payment_mode', 'product', 'read_only', 'requested_action', 'risk_band', 'risk_band_label', 'risk_score', 'status_message', 'upfront_fee_rs', 'upi_apps', 'your_reply'];
 
 test('fee ladder: exact boundaries 29/30/49/50/69/70/84/85/100, fee never above order value', () => {
   const p = DEFAULT_POLICY;
@@ -104,6 +104,16 @@ test('buyer token: 192-bit random, narrow view only, global lookup across tenant
   assert.equal((await get(`/v1/orders/${o.id}`, H(key))).status, 404);
 });
 
+test('buyer view shows the risk score beside the band, and nothing more private', async () => {
+  const o = await demoOrder({ address: 'Near bus stand', pin: '110096', amount: 1500, past_orders: 2, past_returns: 1 });
+  const v = await (await get(`/api/buyer/${tokenOf(o)}`)).json();
+  assert.equal(v.risk_score, o.score);
+  assert.equal(v.risk_band, o.risk_band);
+  assert.ok(!('reasons' in v) && !('events' in v) && !('tenant_id' in v) && !('score' in v));
+  const pre = await demoOrder({ payment_mode: 'prepaid' });
+  assert.equal((await (await get(`/api/buyer/${tokenOf(pre)}`)).json()).risk_score, null);
+});
+
 test('invalid tokens: 404 for page and API, malformed or unknown', async () => {
   for (const t of ['nope', 'A'.repeat(32), 'A'.repeat(31) + '!', '../api/orders', 'x'.repeat(200)]) {
     assert.equal((await get(`/api/buyer/${encodeURIComponent(t)}`)).status, 404, t);
@@ -139,6 +149,21 @@ test('simulated payment: upfront adjusts balance, repeat is idempotent, no decis
   assert.equal(after.decision, null);
   assert.equal(after.buyer_reply, 'paid');
   assert.equal(after.payment.simulated, true);
+  // After recording, nothing asks for payment again: view, amounts, message, reminder.
+  const v = r2.view;
+  assert.equal(v.pay_now_rs, 0, 'nothing newly due now');
+  assert.equal(v.paid_rs, o.commitment_fee_rs);
+  assert.equal(v.upfront_fee_rs, o.commitment_fee_rs, 'original request kept for reference');
+  assert.equal(v.balance_at_delivery_rs, o.amount - o.commitment_fee_rs);
+  assert.equal(v.requested_action, 'none');
+  assert.equal(v.can_pay, false);
+  assert.equal(after.pay_now_rs, 0);
+  assert.equal(after.paid_rs, o.commitment_fee_rs);
+  assert.doesNotMatch(after.whatsapp, /please pay|pay a refundable|upfront here/i);
+  assert.match(after.whatsapp, /recorded your demo upfront payment/);
+  assert.match(after.whatsapp, /remains due at delivery/);
+  await orders.timeWarp(demoTenant, 13);
+  assert.equal(orders.getOrder(demoTenant, o.id).reminder ?? null, null, 'no payment reminder after a recorded payment');
 });
 
 test('5% full online discount is EXTREME-only', async () => {
@@ -152,6 +177,8 @@ test('5% full online discount is EXTREME-only', async () => {
   assert.equal(r.payment.discount_rs, 100);
   assert.equal(r.payment.balance_due_rs, 0);
   assert.match(r.message, /seller still reviews/i);
+  assert.deepEqual([r.view.pay_now_rs, r.view.paid_rs, r.view.balance_at_delivery_rs, r.view.full_online.available, r.view.can_pay], [0, 1900, 0, false, false]);
+  assert.match(orders.getOrder(demoTenant, ext.id).whatsapp, /Nothing is due at delivery/);
 
   const high = await demoOrder({ buyer_name: 'High Band', address: 'Near bus stand', pin: '110096', amount: 1500, past_orders: 2, past_returns: 1 });
   assert.ok(['HIGH', 'VERY_HIGH'].includes(high.risk_band), high.risk_band);

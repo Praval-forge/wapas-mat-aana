@@ -35,7 +35,13 @@ export function buildWhatsAppMessage(order, level, addressCheck, brandName = 'ou
   if (addressCheck?.address_quality && addressCheck.address_quality !== 'clear') {
     lines.push(`Your delivery address looks incomplete: "${order.address}". Please correct it here: ${order.buyer_url}`);
   }
-  if ((order.commitment_fee_rs ?? 0) > 0) {
+  if (order.payment) {
+    // Acknowledge a recorded (simulated) payment; never ask for it again.
+    const p = order.payment;
+    lines.push(`We have recorded your demo ${p.type === 'full_online' ? 'full online' : 'upfront'} payment of ${inr(p.amount_rs)} (no money is collected in this sandbox). Nothing more is due now.`);
+    lines.push(p.balance_due_rs > 0 ? `${inr(p.balance_due_rs)} remains due at delivery.` : 'Nothing is due at delivery.');
+    lines.push(`The store reviews your order before dispatch. Details: ${order.buyer_url}`);
+  } else if ((order.commitment_fee_rs ?? 0) > 0) {
     lines.push(...upfrontLines(order));
   } else {
     lines.push(`Please confirm your COD order here: ${order.buyer_url} (or reply *YES*). There is nothing to pay now.`);
@@ -48,7 +54,7 @@ export function buildWhatsAppMessage(order, level, addressCheck, brandName = 'ou
 
 /** The single reminder, generated once after the policy's reminder window. */
 export function buildReminderMessage(order, level, brandName = 'our store') {
-  if (level === 'LOW' || order.payment_mode === 'prepaid') return null;
+  if (level === 'LOW' || order.payment_mode === 'prepaid' || order.payment) return null;
   const head = `Hi ${firstName(order)}, a reminder about your order ${order.id} (${order.product}, ${inr(order.amount)}, Cash on Delivery).`;
   if ((order.commitment_fee_rs ?? 0) > 0) {
     return [head, ...upfrontLines(order), 'If we do not hear from you, the order may be cancelled. Reply *CANCEL* if you no longer want it.', `- ${brandName}`].join('\n');

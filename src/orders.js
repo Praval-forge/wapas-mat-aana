@@ -93,12 +93,15 @@ function decorate(o) {
 
 const ordersOf = (tenantId) => getState().orders.filter((o) => o.tenant_id === tenantId).map(decorate);
 
-/** What the buyer pays now and what remains at the door. */
+/**
+ * pay_now_rs = what is newly due now (0 once a payment is recorded);
+ * paid_rs = simulated amount already recorded; balance_at_delivery_rs = what remains at the door.
+ */
 function amounts(order) {
-  if (order.payment_mode === 'prepaid') return { pay_now_rs: 0, balance_at_delivery_rs: 0 };
-  if (order.payment) return { pay_now_rs: order.payment.amount_rs, balance_at_delivery_rs: order.payment.balance_due_rs };
+  if (order.payment_mode === 'prepaid') return { pay_now_rs: 0, paid_rs: 0, balance_at_delivery_rs: 0 };
+  if (order.payment) return { pay_now_rs: 0, paid_rs: order.payment.amount_rs, balance_at_delivery_rs: order.payment.balance_due_rs };
   const fee = order.commitment_fee_rs ?? 0;
-  return { pay_now_rs: fee, balance_at_delivery_rs: round2(order.amount - fee) };
+  return { pay_now_rs: fee, paid_rs: 0, balance_at_delivery_rs: round2(order.amount - fee) };
 }
 
 function renderMessages(order, settings) {
@@ -398,6 +401,7 @@ function createPayment(order, { type, app, source }) {
     recorded_at: now(),
   };
   Object.assign(order, amounts(order));
+  renderMessages(order, settingsFor(order.tenant_id)); // the message now acknowledges the payment; it never asks again
   return order.payment;
 }
 
@@ -463,7 +467,7 @@ export function buyerView(order) {
   const readOnly = order.status === 'CANCELLED';
   const fee = cod ? order.commitment_fee_rs ?? 0 : 0;
   const discount = round2((Number(order.amount) * FULL_ONLINE_DISCOUNT_PCT) / 100);
-  const requested = !cod ? 'none' : fee > 0 ? 'pay_upfront' : order.risk === 'MEDIUM' ? 'confirm' : 'none';
+  const requested = !cod || order.payment ? 'none' : fee > 0 ? 'pay_upfront' : order.risk === 'MEDIUM' ? 'confirm' : 'none';
   const realReply = order.buyer_reply && order.buyer_reply !== 'no_reply' ? order.buyer_reply : null;
   return {
     demo: true,
@@ -475,12 +479,14 @@ export function buyerView(order) {
     order_value_rs: order.amount,
     address: order.address,
     payment_mode: order.payment_mode,
+    risk_score: cod ? order.score : null,
     risk_band: cod ? order.risk_band : null,
     risk_band_label: cod ? order.risk_band_label : null,
     requested_action: requested,
-    pay_now_rs: order.pay_now_rs,
+    pay_now_rs: order.pay_now_rs, // newly due now: 0 once a payment is recorded
+    paid_rs: order.paid_rs ?? 0, // simulated amount already recorded
     balance_at_delivery_rs: order.balance_at_delivery_rs,
-    upfront_fee_rs: fee,
+    upfront_fee_rs: fee, // the original upfront request (kept for reference after payment)
     full_online: cod && order.risk_band === 'EXTREME' && !order.payment
       ? { available: true, discount_pct: FULL_ONLINE_DISCOUNT_PCT, discount_rs: discount, amount_rs: round2(order.amount - discount) }
       : { available: false },
@@ -576,7 +582,7 @@ export async function sweepSilence() {
     // A recorded no_reply IS silence. Only an actual response (confirm, paid, cancel,
     // wrong_address, address_fixed) or any human action prevents the silence outcome.
     const silent = !order.buyer_reply || order.buyer_reply === 'no_reply';
-    if (!order.reminder_sent_at && elapsedH >= policy.reminderAfterHours) {
+    if (!order.reminder_sent_at && !order.payment && elapsedH >= policy.reminderAfterHours) {
       order.reminder_sent_at = now();
       order.reminder = buildReminderMessage(order, order.risk, settingsFor(order.tenant_id).brand_name);
       log(order, 'reminder', 'One reminder generated (mock only, never sent automatically). Human decision still required.');

@@ -251,11 +251,11 @@
           },
           "pay_now_rs": {
             "type": "number",
-            "description": "What the buyer is asked to pay now (0 for LOW/MEDIUM/prepaid)"
+            "description": "Newly due now: the band's upfront amount before payment; 0 for LOW/MEDIUM/prepaid and 0 once a payment is recorded"
           },
           "balance_at_delivery_rs": {
             "type": "number",
-            "description": "Order value minus the upfront amount (or recorded payment)"
+            "description": "What remains due at the door: order value minus the upfront amount, or the recorded payment's balance"
           },
           "decided_at": {
             "type": "string",
@@ -324,6 +324,10 @@
                 "format": "date-time"
               }
             }
+          },
+          "paid_rs": {
+            "type": "number",
+            "description": "Simulated amount already recorded (0 if none). No money is collected."
           }
         }
       },
@@ -1153,7 +1157,7 @@
           "Demo (unauthenticated sandbox)"
         ],
         "security": [],
-        "summary": "Narrow buyer view (bearer link). No tenant, score, events, phone or decision data.",
+        "summary": "Narrow buyer view (bearer link): brand, product, value, address, risk score and band, pay now / paid / balance, ladder, allowed actions. No tenant, reasons, events, phone or decision data.",
         "parameters": [
           {
             "name": "token",

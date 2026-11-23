@@ -178,6 +178,7 @@ function orderSummary(order) {
     risk_band: order.risk_band ?? null,
     commitment_fee_rs: order.commitment_fee_rs ?? 0,
     pay_now_rs: order.pay_now_rs ?? null,
+    paid_rs: order.paid_rs ?? 0,
     balance_at_delivery_rs: order.balance_at_delivery_rs ?? null,
     payment: order.payment ? { type: order.payment.type, amount_rs: order.payment.amount_rs, balance_due_rs: order.payment.balance_due_rs, simulated: true } : null,
     status: order.status,
