@@ -1,113 +1,85 @@
-# COD Return Guard
+# Wapas Mat Aana
 
-A prototype for Indian D2C Shopify sellers. About 37.5% of cash-on-delivery (COD) orders are returned, against roughly 5.3% of prepaid orders, and each return costs about Rs 350 on a Rs 1,200 order. COD Return Guard scores every COD order **before it ships**. It asks risky buyers to confirm or pay a small Rs 50 commitment fee, and it leaves the final decision on risky orders to a human.
+An API-first COD return-risk prototype with an operator console. Inspired by the team's Wapas Mat Aana demo, backed by scoped API keys, per-brand policies, persistence, signed webhooks and tests.
 
-## What it does
+## Run
 
-1. A new COD order arrives (simulated by the demo order form and 5 seed orders).
-2. It checks the order's pin code against a return-rate table and the buyer's own past returns / past orders.
-3. It reads the free-text delivery address and rates it `clear`, `vague` or `bad`. This is the only LLM call.
-4. It combines the three signals into a **LOW / MEDIUM / HIGH** risk score.
-5. For MEDIUM and HIGH orders it writes a WhatsApp message asking the buyer to confirm or pay Rs 50. The message is only displayed in the UI (mock send).
-6. It ships or holds the order:
-   - **LOW** ships automatically.
-   - **MEDIUM** waits for the buyer. A confirm or the Rs 50 fee ships it. No reply or "cancel" sends it to **HOLD**.
-   - **HIGH** goes straight to **HOLD**, and stays there even if the buyer confirms.
-   - **Nothing is ever auto-cancelled.** The seller can Ship, Hold or Override any decision (an override needs a written note and is kept in the audit log), and sees the reasons behind every score.
+Node 20.12+ required. `npm ci`, `npm test`, `npm start`, then open http://localhost:3000. API docs: `/docs`; spec: `/v1/openapi.json`; health: `/v1/health`.
 
-## Architecture: plain code plus exactly one LLM call
+No API key or paid service is needed to run the demo. Copy `.env.example` only for private configuration. Never commit `.env`, real customer data or credentials.
 
-```
-order ─► [1] pin-code risk ───────────┐  plain code  (src/checks.js, lookup table in src/data.js)
-      ─► [2] buyer's past returns ────┤  plain code
-      ─► [3] address quality ─────────┤  THE ONE LLM CALL: claude-haiku-4-5 (src/addressLLM.js)
-                                      ▼
-      ─► [4] risk score rules ──────── plain code  (src/checks.js: scoreOrder)
-      ─► [5] WhatsApp message text ─── plain code  (src/whatsapp.js)
-      ─► [6] ship / hold workflow ──── plain code  (src/orders.js), seller can override
-```
+## Decisions
 
-**The LLM call (step 3).**
-- **Model:** `claude-haiku-4-5`, through the official `@anthropic-ai/sdk`.
-- **Input:** only the address text. The buyer's name, phone and order value are never sent.
-- **Output shape:** the call uses **tool use** with `strict: true` and a forced `tool_choice`. The model must return `{ address_quality: "clear" | "vague" | "bad", reason: "<one line>" }`. The result is checked again in code before it is used.
-- **Prompt injection:** the address is treated as untrusted data, and the output can only be one of three enum values.
-- **Cost and limits:** `max_tokens` is 300, the timeout is 15 s, and there is one SDK retry. The app makes exactly one call per order (`npm test` asserts this). The write endpoints also have a small per-IP rate limit.
+Every order starts `PENDING_REVIEW`, including LOW and prepaid. The tool supplies `suggested_action`, not a final decision. The seller can manually **Ship / Hold / Cancel**, change their mind, or explicitly accept suggestions in bulk. Each action records `decision`, `decision_by`, `decided_at` and audit events.
 
-**Risk rules (step 4, first match wins).** Inputs: pin risk, past returns, address quality.
+**One automatic exception, enabled by default:** an order asked to pay upfront is cancelled after 24 hours of buyer silence. A prior human decision or any recorded reply prevents this. Brands can disable `autoCancelSilent` or set `highSilentAction: hold` (suggest hold only). Every automatic cancellation is marked `decision_by: system`, includes a reason and emits `order.auto_cancelled`. No automatic shipping or holding occurs. The background sweep generates one mock reminder after 12 hours.
 
-| Rule | Condition | Result |
+## Fee ladder
+
+| Score | Band | Buyer request |
 |---|---|---|
-| R1 | 2 or more past returns | HIGH |
-| R2 | address is `bad` | HIGH |
-| R3 | address is `vague` | HIGH |
-| R4 | high-return pin and at least 1 past return | HIGH |
-| R5 | `clear` address but high-return pin | MEDIUM |
-| R6 | 1 or more past returns with an elevated ratio (25% or more) or a medium pin | MEDIUM |
-| R7 | full address, safe pin, no meaningful return history | LOW |
+| 0–29 | Low | No confirmation, suggest ship |
+| 30–49 | Medium | Reply YES |
+| 50–69 | High | ₹49 upfront |
+| 70–84 | Very high | ₹99 upfront |
+| 85–100 | Extreme | ₹149 upfront |
 
-Pin thresholds: a return rate of 45% or more is *high*, 30% or more is *medium*, and anything lower is *low*. A pin with fewer than 30 orders, or one missing from the table, is *unknown* and treated neutrally.
+Amounts and band cutoffs are per-brand configurable with `PUT /v1/policy`. Fees are adjusted against the order total. Payment URLs are placeholders, not real collection links. Recorded Paid is a simulation, not verification of a financial transaction.
 
-**Fairness guard: no blanket rules.** Scoring takes only the three per-order signals above. City, state and buyer name are not inputs to the scorer. A request such as "block all buyers from Jaipur" is **refused** by `POST /api/seller-rules`, which returns HTTP 422. The app has no custom rules engine at all. Seed order 5 demonstrates this: the seller asks for a city-wide block, the request is refused and logged, and the order is scored on its own signals (LOW, ships). `npm test` checks that changing only the city or name never changes a score.
+## Explainable scoring
 
-## Run locally
+All signals combine additively, clamped 0–100. Pin is one input, never a gate.
 
-Requires Node.js 20.12 or newer.
+- Two or more past returns +40, one return +25, loyal buyer (3+ orders, no returns) −15.
+- Pin return rate 30%+ adds 30, 20%+ adds 15, unknown adds 10. Data is illustrative.
+- Short address (<25 chars) +10, no number +5, no landmark/locality marker +5.
+- Invalid/repetitive phone +20, name verification flag +20.
+- Two or more orders from the phone today +15, value over ₹2,000 +10, first-time buyer +10.
 
-```bash
-npm install
-npm start          # http://localhost:3000
-```
+Weights, value threshold and frequency threshold are configurable. City, region, ethnicity and community are never score inputs. Blanket group-ban requests are refused (422). Phone/name heuristics are explainable demo flags, not proof of fraud. They can misclassify real people and should be evaluated before real use. A human reviews the evidence.
 
-```bash
-npm test           # seed orders + invariants + LLM request/response path (no API key needed)
-```
-
-### Where to put `ANTHROPIC_API_KEY`
-
-Either export it in your shell or put it in a git-ignored `.env` file:
-
-```bash
-cp .env.example .env
-# edit .env and set ANTHROPIC_API_KEY=sk-ant-...
-```
-
-The key is read only from `process.env.ANTHROPIC_API_KEY` (the server loads `.env` at startup). It is never hardcoded, and `.env` is in `.gitignore`.
-
-### Demo mode (no key)
-
-If `ANTHROPIC_API_KEY` is missing, the app **runs fully in demo mode** and makes no network calls. Step 3 uses a rule-based address check instead of the LLM: it looks at length, a house or flat number, street or locality keywords, and landmark words. The same fallback is used if the API call fails or returns an unusable answer, and the UI labels the step "rule-based fallback" and shows why. The badge in the header shows which mode is active.
+Prepaid bypasses COD scoring and the address call. Optional imported history overrides demo phone history. The address LLM hook, when privately configured, receives only address text and returns a strict enum plus explanation. Without a key it uses a labeled rule-based fallback. Reference-aligned address points remain deterministic; the LLM provides additional evidence only.
 
 ## API
 
-| Method and path | Purpose |
+Send `X-API-Key`. The published sandbox key is `wma_test_demo_000000000000000000000000sandbox`.
+
+| Method/path | Purpose |
 |---|---|
-| `POST /api/score` | Score an order without saving it. Body: `buyer_name, phone, pin, address` (optional `city, product, amount`). |
-| `POST /api/orders` | Create, score and route an order. |
-| `GET /api/orders`, `GET /api/orders/:id` | Queue and detail, including every step's output. |
-| `POST /api/orders/:id/action` | `{action: "ship" \| "hold"}` or `{action: "override", to: "ship" \| "hold" \| "cancel", note}`. |
-| `POST /api/orders/:id/reply` | Simulate the buyer: `{reply: "confirm" \| "paid" \| "cancel" \| "no_reply"}`. |
-| `POST /api/seller-rules` | Submit a seller rule. Blanket group rules are refused (422). |
-| `POST /api/reset` | Re-seed the 5 demo orders. |
+| POST /v1/orders | Validate, score, store and suggest. external_id / Idempotency-Key prevent duplicates |
+| POST /v1/orders/score | Stateless preview |
+| GET /v1/orders[/:id] | Tenant-isolated queue/detail |
+| POST /v1/orders/:id/buyer-reply | confirm, paid, cancel, no_reply, wrong_address. Evidence only |
+| POST /v1/orders/:id/actions | action ship/hold/cancel, or override with to + required note |
+| GET /v1/orders/:id/suggestion | Suggested action only |
+| GET/PUT /v1/policy | Validated scoring/fees/timing policy |
+| GET/PUT /v1/settings | Brand name and savings assumptions |
+| POST/GET/DELETE /v1/webhooks[/:id] | Signed event subscriptions |
+| GET /v1/webhooks-deliveries | Delivery audit |
+| GET /v1/usage | Per-key metering and tenant plan limits |
 
-```bash
-curl -s localhost:3000/api/score -H 'content-type: application/json' \
-  -d '{"buyer_name":"Sneha Reddy","phone":"9810000002","pin":"500081","address":"Near temple, Hyd"}'
-```
+Scopes: orders:read, orders:write, orders:action, policy:manage, webhooks:manage. Keys are SHA-256 hashed, shown once, rotatable and revocable. New keys use wma_test_/wma_live_; legacy cgk_ keys remain accepted. Legacy CODGUARD_* environment variables and X-CODGuard-* signature headers are retained for compatibility.
 
-## Seed orders
+Signed outbound events include order.scored, order.reply_received, order.review_required, order.reminded, order.status_changed, order.overridden and order.auto_cancelled. Verify X-CODGuard-Signature as `sha256=<HMAC-SHA256(raw body, webhook secret)>`. Delivery retries once and records results.
 
-| Order | Case | Expected |
-|---|---|---|
-| CG-1001 | full address, safe pin, no returns | LOW, ships |
-| CG-1002 | `"Near temple, Hyd"` (vague) | HIGH, hold |
-| CG-1003 | buyer with 2 past returns | HIGH, hold |
-| CG-1004 | good address, high-return pin | MEDIUM, confirm only |
-| CG-1005 | seller asks to "block all buyers from Jaipur" | request refused, scored on its own signals (LOW) |
+Plans are prototype limits, not paid subscriptions: Sandbox 500 orders/month, 30 requests/min, 1 webhook; Growth 50,000, 120/min, 5 webhooks; Scale 1,000,000, 600/min, 25 webhooks. Billing is not connected.
 
-## Prototype limits
+## Console
 
-- Orders live in memory and reset on restart. Pin and buyer data are illustrative, in `src/data.js`.
-- The WhatsApp send and the Rs 50 payment link are mocks.
-- There is no Shopify integration yet. A real version would take orders from a Shopify webhook, build the pin and buyer tables from the seller's own return history, and add auth.
-- With a real API key the `claude-haiku-4-5` call is covered only by a local mock server in `npm test`. Check the quality of its address ratings on your own addresses.
+Black-header operator workspace, five KPIs, six queue views, score circles, reason cards, WhatsApp preview/copy/manual chat link, reply simulation, manual decisions, S/H/C shortcuts and arrow-key selection, auto-advance, settings/help drawers, CSV import and bulk actions.
+
+CSV columns: `order_id,name,phone,address,city,pincode,order_value,payment_mode,past_orders,past_rto_count,orders_same_phone_today`. Import up to 100 rows via `POST /api/import {orders:[...]}`. Partial results list validation errors; repeated order IDs replay. Today counts are imported or computed from tenant orders. The sandbox API is intentionally unauthenticated and shared, never upload personal data.
+
+`POST /api/demo/bulk` supports ship_safe, simulate_replies, accept_suggestions, all explicit human-triggered actions. `POST /api/demo/advance` advances the demo clock; `/api/reset` restores seed orders. Brand name and savings assumptions persist through `/api/settings`.
+
+Savings estimate = risky COD count × assumed return rate × prevention share × cost/return × 30. This is illustrative, not measured savings. Defaults: 37.5%, 30%, ₹350.
+
+## Admin and limits
+
+`/admin/api` and console manage tenants and keys with X-Admin-Key. The public demo uses documented `demo-admin-key`. Before real use, set CODGUARD_ADMIN_KEY privately, replace the public dashboard with authenticated seller accounts and remove demo mutation routes.
+
+Persistence is an atomic JSON file (CODGUARD_DATA_FILE). Render free instances have ephemeral storage, sleep on inactivity and can cold-start slowly. No durability guarantee is made. Use managed Postgres, a job queue, distributed rate limits, durable webhook retries, real authentication, retention/privacy controls, provider verification and operational monitoring before customer traffic. Idempotency is single-process and must be backed by a database uniqueness constraint for scale.
+
+No automatic WhatsApp provider, real payments, n8n workflow, billing or paid service is enabled. WhatsApp opens a prefilled chat that a person must review and send. No real platform integration with Swiggy, Zomato or Amazon is claimed.
+
+MIT license, see LICENSE.

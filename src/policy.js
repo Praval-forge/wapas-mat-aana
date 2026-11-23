@@ -19,7 +19,7 @@ export function evaluateSellerRule(text) {
       code: 'blanket_group_rule',
       message:
         'Refused: blanket rules that block a whole city, region or group of buyers are not supported. ' +
-        'COD Return Guard scores every order on its own signals (pin-code return history, that buyer\'s own ' +
+        'Wapas Mat Aana scores every order on its own signals (pin-code return history, that buyer\'s own ' +
         'past returns, and address quality), and a human decides on risky orders.',
     };
   }
@@ -30,3 +30,4 @@ export function evaluateSellerRule(text) {
       'This prototype has no custom rules engine. Scoring uses fixed per-order signals; use Ship / Hold / Override on a specific order instead.',
   };
 }
+

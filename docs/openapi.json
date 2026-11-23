@@ -1,0 +1,929 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Wapas Mat Aana API",
+    "version": "2.0.0",
+    "description": "Wapas Mat Aana. API-key-authenticated, tenant-isolated scoring with human-final decisions. One exception: silent upfront-request orders may auto-cancel after 24h when the per-brand toggle is ON. Fees: 50\u201369 \u20b949, 70\u201384 \u20b999, 85+ \u20b9149. No real payments or automated WhatsApp sending."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Orders"
+    },
+    {
+      "name": "Policy"
+    },
+    {
+      "name": "Webhooks"
+    },
+    {
+      "name": "Usage"
+    },
+    {
+      "name": "Meta"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {}
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        }
+      },
+      "OrderInput": {
+        "type": "object",
+        "required": [
+          "buyer_name",
+          "pin",
+          "address"
+        ],
+        "properties": {
+          "buyer_name": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "phone": {
+            "type": "string",
+            "description": "10-digit Indian mobile; used to look up buyer history"
+          },
+          "pin": {
+            "type": "string",
+            "pattern": "^[1-9]\\d{5}$"
+          },
+          "city": {
+            "type": "string",
+            "description": "Display only; never used in scoring (fairness)"
+          },
+          "address": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "product": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "number",
+            "description": "Order value in INR"
+          },
+          "external_id": {
+            "type": "string",
+            "description": "Your own order id, echoed back and queryable"
+          },
+          "payment_mode": {
+            "type": "string",
+            "enum": [
+              "cod",
+              "prepaid"
+            ]
+          },
+          "past_orders": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "past_returns": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "orders_same_phone_today": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "Order": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "CG-1004"
+          },
+          "external_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "buyer_name": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "pin": {
+            "type": "string"
+          },
+          "city": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "product": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "risk": {
+            "type": "string",
+            "enum": [
+              "LOW",
+              "MEDIUM",
+              "HIGH"
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "SHIPPED",
+              "AWAITING_CONFIRMATION",
+              "HOLD",
+              "CANCELLED"
+            ]
+          },
+          "whatsapp": {
+            "type": "string",
+            "nullable": true
+          },
+          "buyer_reply": {
+            "type": "string",
+            "nullable": true
+          },
+          "overridden": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "steps": {
+            "type": "object",
+            "description": "pin_check, history, address_check and score (with points breakdown)"
+          },
+          "decision": {
+            "type": "string",
+            "nullable": true
+          },
+          "decision_by": {
+            "type": "string",
+            "enum": [
+              "human",
+              "system"
+            ],
+            "nullable": true
+          },
+          "suggested_action": {
+            "type": "string"
+          },
+          "commitment_fee_rs": {
+            "type": "integer"
+          },
+          "risk_band": {
+            "type": "string"
+          }
+        }
+      },
+      "Policy": {
+        "type": "object",
+        "properties": {
+          "lowMax": {
+            "type": "integer",
+            "default": 29
+          },
+          "mediumMax": {
+            "type": "integer",
+            "default": 59
+          },
+          "weights": {
+            "type": "object",
+            "properties": {
+              "repeatReturner": {
+                "type": "integer",
+                "default": 65
+              },
+              "onePastReturn": {
+                "type": "integer",
+                "default": 30
+              },
+              "addressBad": {
+                "type": "integer",
+                "default": 65
+              },
+              "addressVague": {
+                "type": "integer",
+                "default": 40
+              },
+              "pinHigh": {
+                "type": "integer",
+                "default": 30
+              },
+              "pinMedium": {
+                "type": "integer",
+                "default": 15
+              }
+            }
+          },
+          "reminderAfterHours": {
+            "type": "integer",
+            "default": 12
+          },
+          "mediumSilentAfterHours": {
+            "type": "integer",
+            "default": 24
+          },
+          "highSilentAfterHours": {
+            "type": "integer",
+            "default": 24
+          },
+          "highSilentAction": {
+            "type": "string",
+            "enum": [
+              "cancel",
+              "hold"
+            ],
+            "default": "cancel"
+          }
+        }
+      },
+      "Webhook": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "order.scored",
+                "order.status_changed",
+                "order.overridden",
+                "order.reminded"
+              ]
+            }
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/v1/meta": {
+      "get": {
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Service metadata, plan limits and webhook event names",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Metadata"
+          }
+        }
+      }
+    },
+    "/v1/orders": {
+      "post": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "Ingest a order: validate, score on all signals, route",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The scored, routed order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited or monthly quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "List orders (filterable by status, risk, external_id)",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "risk",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "external_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Orders for this tenant"
+          }
+        }
+      }
+    },
+    "/v1/orders/score": {
+      "post": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "Stateless scoring preview (nothing stored, no quota used)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Score, tier, reasons and per-signal points breakdown"
+          }
+        }
+      }
+    },
+    "/v1/orders/{id}": {
+      "get": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "Get one order by CG id or your external_id",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orders/{id}/buyer-reply": {
+      "post": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "Post a buyer reply event (from your WhatsApp provider)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "reply"
+                ],
+                "properties": {
+                  "reply": {
+                    "type": "string",
+                    "enum": [
+                      "confirm",
+                      "paid",
+                      "cancel",
+                      "no_reply",
+                      "wrong_address"
+                    ],
+                    "description": "confirm = buyer replied YES; paid = commitment fee paid; cancel = buyer replied CANCEL; no_reply = buyer stayed silent through the policy window"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated order"
+          },
+          "400": {
+            "description": "Workflow error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orders/{id}/actions": {
+      "post": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "Seller action: ship | hold | override (override needs a note)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "action"
+                ],
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "ship",
+                      "hold",
+                      "override"
+                    ]
+                  },
+                  "to": {
+                    "type": "string",
+                    "enum": [
+                      "ship",
+                      "hold",
+                      "cancel"
+                    ],
+                    "description": "required when action=override"
+                  },
+                  "note": {
+                    "type": "string",
+                    "description": "required when action=override; kept in the audit log"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated order"
+          },
+          "400": {
+            "description": "Workflow error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Human-final action: ship, hold, cancel. Records decision_by=human and an audit event. override requires a note."
+      }
+    },
+    "/v1/seller-rules": {
+      "post": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "Fairness guard: blanket group rules are always refused (422)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "text"
+                ],
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "422": {
+            "description": "Refused, with explanation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/policy": {
+      "get": {
+        "tags": [
+          "Policy"
+        ],
+        "summary": "Effective scoring/routing policy for your tenant",
+        "responses": {
+          "200": {
+            "description": "The policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Policy"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Policy"
+        ],
+        "summary": "Patch policy overrides (thresholds, weights, silence timings)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Policy"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "New effective policy"
+          },
+          "422": {
+            "description": "Invalid policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhooks": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Register a webhook. The signing secret is returned exactly once.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "url"
+                ],
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "events": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "order.scored",
+                        "order.status_changed",
+                        "order.overridden",
+                        "order.reminded"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created; includes `secret` once"
+          },
+          "402": {
+            "description": "Plan webhook cap reached"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "List webhooks (secrets are never returned)",
+        "responses": {
+          "200": {
+            "description": "Webhooks"
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}": {
+      "delete": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Deactivate a webhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deactivated"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/v1/webhooks-deliveries": {
+      "get": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Recent delivery attempts (status, retries, latency)",
+        "responses": {
+          "200": {
+            "description": "Delivery log"
+          }
+        }
+      }
+    },
+    "/v1/usage": {
+      "get": {
+        "tags": [
+          "Usage"
+        ],
+        "summary": "Your plan limits and per-month usage",
+        "responses": {
+          "200": {
+            "description": "Usage by month"
+          }
+        }
+      }
+    },
+    "/v1/settings": {
+      "get": {
+        "tags": [
+          "Policy"
+        ],
+        "summary": "Read brand name and savings assumptions",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settings"
+          },
+          "400": {
+            "description": "Invalid settings"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Policy"
+        ],
+        "summary": "Update brand name and savings assumptions",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settings"
+          },
+          "400": {
+            "description": "Invalid settings"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "brand_name": {
+                    "type": "string",
+                    "maxLength": 80
+                  },
+                  "cost_per_return": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "return_rate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "prevention_share": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orders/{id}/suggestion": {
+      "get": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "Read suggested action without executing",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "action and requires_seller_approval"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    }
+  }
+}

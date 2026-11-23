@@ -18,6 +18,7 @@ const server = http.createServer((req, res) => {
   });
 });
 await new Promise((r) => server.listen(0, r));
+process.env.CODGUARD_DATA_FILE = ':memory:';
 process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${server.address().port}`;
 process.env.ANTHROPIC_API_KEY = 'test-key-not-real';
 
@@ -38,7 +39,9 @@ assert.equal(calls[0].auth, 'Bearer test-key-not-real'); // key comes from env, 
 
 // Exactly ONE LLM call per order through the whole pipeline.
 calls.length = 0;
-await orders.createOrder({ buyer_name: 'Sneha Reddy', phone: '9810000002', pin: '500081', city: 'Hyderabad', address: 'Near temple, Hyd', product: 'x', amount: 1200 });
+const { createTenant } = await import('../src/tenants.js');
+const T = createTenant({ name: 'llm test' }).id;
+await orders.createOrder(T, { buyer_name: 'Sneha Reddy', phone: '9810000002', pin: '500081', city: 'Hyderabad', address: 'Near temple, Hyd', product: 'x', amount: 1200 });
 assert.equal(calls.length, 1, 'exactly one LLM call per order');
 
 // Failure and malformed output both fall back to rules, and the app keeps working.
@@ -47,3 +50,4 @@ mode = 'error'; const e = await checkAddress('Near temple, Hyd'); assert.equal(e
 server.close();
 console.log('LLM path checks passed (model, strict forced tool, address-only input, 1 call/order, fallbacks).');
 process.exit(0);
+

@@ -1,7 +1,7 @@
 {
-  "name": "cod-return-guard",
-  "version": "1.0.0",
-  "description": "Score Indian D2C COD orders for return risk before they ship. Plain code + exactly one LLM call (address quality).",
+  "name": "wapas-mat-aana",
+  "version": "2.0.0",
+  "description": "COD return-risk scoring API + dashboard for Indian D2C and delivery platforms. Plain code + exactly one LLM call (address quality).",
   "type": "module",
   "main": "src/server.js",
   "engines": {
@@ -10,12 +10,15 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node test/seed-check.js && node test/llm-path.js"
+    "test": "node test/seed-check.js && node test/llm-path.js && node --test test/api.test.js && node --test test/features.test.js"
   },
   "license": "MIT",
   "private": true,
   "dependencies": {
     "@anthropic-ai/sdk": "^1.10.0",
     "express": "^5.3.0"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.18.1"
   }
 }

@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {test,before,after} from 'node:test';
+process.env.CODGUARD_DATA_FILE=':memory:';delete process.env.ANTHROPIC_API_KEY;
+const {app,boot}=await import('../src/server.js');
+const {DEMO_API_KEY}=await import('../src/demoTenant.js');
+let server,base;const headers={'content-type':'application/json','X-API-Key':DEMO_API_KEY};
+const input={buyer_name:'Test Buyer',phone:'9999900000',pin:'560034',city:'Bengaluru',address:'bus stand',amount:1000};
+const post=(path,body)=>fetch(base+path,{method:'POST',headers,body:JSON.stringify(body)});
+before(async()=>{await boot();server=app.listen(0);await new Promise(r=>server.once('listening',r));base='http://127.0.0.1:'+server.address().port;});after(()=>server.close());
+test('prepaid skips address evaluation and ships without WhatsApp',async()=>{const r=await post('/v1/orders',{...input,payment_mode:'prepaid'});assert.equal(r.status,201);const o=await r.json();assert.equal(o.score,0);assert.equal(o.status,'PENDING_REVIEW');assert.equal(o.whatsapp,null);assert.equal(o.steps.address_check.source,'skipped');});
+test('caller history controls the history signal',async()=>{const r=await post('/v1/orders/score',{...input,address:'Flat 1, A Road, HSR Layout, Bengaluru 560034',past_orders:5,past_returns:2});const o=await r.json();assert.equal(o.score,60);assert.equal(o.steps.history.past_returns,2);});
+test('wrong address holds order and records reply',async()=>{const o=await(await post('/v1/orders',input)).json();const r=await post(`/v1/orders/${o.id}/buyer-reply`,{reply:'wrong_address'});assert.equal(r.status,200);const v=await r.json();assert.equal(v.status,'PENDING_REVIEW');assert.equal(v.buyer_reply,'wrong_address');});
+test('settings validated, persisted, used for new messages',async()=>{let r=await fetch(base+'/v1/settings',{method:'PUT',headers,body:JSON.stringify({brand_name:'Test Store',return_rate:35})});assert.equal(r.status,200);const o=await(await post('/v1/orders',input)).json();assert.match(o.whatsapp,/Test Store/);r=await fetch(base+'/v1/settings',{method:'PUT',headers,body:JSON.stringify({return_rate:150})});assert.equal(r.status,400);});
+test('CSV aliases accepted and imports replay by external id',async()=>{const row={order_id:'CSV1',name:'CSV Buyer',phone:'919999900001',pincode:'560034',address:'Flat 1, A Road, HSR Layout, Bengaluru 560034',order_value:'900',past_orders:'3',past_rto_count:'1'};let d=await(await post('/api/import',{orders:[row]})).json();assert.ok(d.results[0].id);d=await(await post('/api/import',{orders:[row]})).json();assert.equal(d.results[0].replayed,true);});
+test('import bounds and history validation',async()=>{let r=await post('/api/import',{orders:Array(101).fill(input)});assert.equal(r.status,400);r=await post('/v1/orders',{...input,past_returns:-1});assert.equal(r.status,400);});
+test('bulk simulation and suggestion application are audited',async()=>{await post('/api/orders',input);let r=await post('/api/demo/bulk',{action:'simulate_replies'});assert.equal(r.status,200);let d=await r.json();assert.ok(d.changed>0);await post('/api/orders',input);r=await post('/api/demo/bulk',{action:'accept_suggestions'});d=await r.json();assert.ok(d.orders.some(o=>o.events.some(e=>e.type==='override')));});

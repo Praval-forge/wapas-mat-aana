@@ -95,3 +95,4 @@ export const SEED_ORDERS = [
     seller_request: 'Block all COD buyers from Jaipur',
   },
 ];
+

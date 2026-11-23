@@ -1,4 +1,6 @@
 // Steps 2 and 4 of the pipeline: plain code, no AI.
+// v2: every COD order is scored on ALL three signals and combined into a
+// 0-100 score. The pin code is one input, never a gate that skips the rest.
 import { PIN_TABLE, PIN_THRESHOLDS, BUYER_HISTORY } from './data.js';
 
 /** Step 2a - pin-code risk from the lookup table. */
@@ -31,10 +33,11 @@ export function checkPin(pin) {
 }
 
 /** Step 2b - the buyer's own past returns / past orders. */
-export function checkHistory(phone) {
-  const h = BUYER_HISTORY[phone] ?? { past_orders: 0, past_returns: 0 };
+export function checkHistory(phone, override = {}) {
+  const supplied = override.past_orders != null || override.past_returns != null;
+  const h = supplied ? { past_orders: override.past_orders ?? 0, past_returns: override.past_returns ?? 0 } : BUYER_HISTORY[phone] ?? { past_orders: 0, past_returns: 0 };
   const ratio = h.past_orders > 0 ? h.past_returns / h.past_orders : 0;
-  const known = phone in BUYER_HISTORY;
+  const known = supplied || phone in BUYER_HISTORY;
   return {
     past_orders: h.past_orders,
     past_returns: h.past_returns,
@@ -46,41 +49,56 @@ export function checkHistory(phone) {
 }
 
 /**
- * Step 4 - risk score. Ordered rules, first match wins.
+ * Step 4 - the score. Additive, transparent, 0-100 (capped). Weights come from
+ * the brand's policy so a brand can tune them. Every signal contributes; the
+ * score is never short-circuited by a single input.
  *
  * IMPORTANT (fairness): the ONLY inputs are the three per-order signals below.
- * City, state, buyer name, etc. are deliberately NOT parameters, so a "block everyone
- * from <city>" rule cannot be expressed here. Every order is scored on its own signals.
+ * City, state, buyer name, etc. are deliberately NOT parameters, so a "block
+ * everyone from <city>" rule cannot be expressed here.
+ *
+ * Returns { score, level, rule, reasons, breakdown } where level is
+ * LOW | MEDIUM | HIGH from the policy's bands, and breakdown shows the points
+ * each signal contributed (so a brand can explain every score).
  */
-export function scoreOrder({ pinCheck, history, addressCheck }) {
+export function scoreOrder({ pinCheck, history, addressCheck, amount = 0, ordersSamePhoneToday = 1, address = '', phone = '', buyerName = '' }, policy) {
+  const w = policy.weights;
+  const breakdown = [];
   const reasons = [];
-  const { past_returns: returns, return_ratio: ratio } = history;
-  const q = addressCheck.address_quality;
+  const add = (signal, points, reason) => {
+    if (points !== 0) breakdown.push({ signal, points });
+    if (reason) reasons.push(reason);
+  };
 
-  // Collect every relevant signal so the seller sees all of them, not just the deciding one.
-  if (returns >= 2) reasons.push(`Repeat returner: ${returns} past returns`);
-  else if (returns === 1) reasons.push(`1 past return (${Math.round(ratio * 100)}% of ${history.past_orders} orders)`);
-  if (q === 'bad') reasons.push(`Address unusable: ${addressCheck.reason}`);
-  if (q === 'vague') reasons.push(`Address vague: ${addressCheck.reason}`);
-  if (pinCheck.risk === 'high') reasons.push(`High-return pin code (${Math.round(pinCheck.return_rate * 100)}% returned)`);
-  if (pinCheck.risk === 'medium') reasons.push(`Medium-return pin code (${Math.round(pinCheck.return_rate * 100)}% returned)`);
+  // Signal 1: the buyer's own past returns.
+  const returns = history.past_returns;
+  if (returns >= 2) add('buyer_history', w.repeatReturner, `Repeat returner: ${returns} past returns`);
+  else if (returns === 1)
+    add('buyer_history', w.onePastReturn, `1 past return (${Math.round(history.return_ratio * 100)}% of ${history.past_orders} orders)`);
 
-  let level;
-  let rule;
-  if (returns >= 2) [level, rule] = ['HIGH', 'R1: 2+ past returns'];
-  else if (q === 'bad') [level, rule] = ['HIGH', 'R2: address unusable'];
-  else if (q === 'vague') [level, rule] = ['HIGH', 'R3: vague address'];
-  else if (pinCheck.risk === 'high' && returns >= 1) [level, rule] = ['HIGH', 'R4: high-return pin + a past return'];
-  else if (pinCheck.risk === 'high') [level, rule] = ['MEDIUM', 'R5: clear address but high-return pin'];
-  else if (returns >= 1 && (ratio >= 0.25 || pinCheck.risk === 'medium'))
-    [level, rule] = ['MEDIUM', 'R6: past return with elevated ratio / medium pin'];
-  else [level, rule] = ['LOW', 'R7: full address, safe pin, no meaningful return history'];
-
+  else if (history.past_orders >= 3) add('buyer_history',-w.loyalBuyer,`Loyal buyer: ${history.past_orders} orders, no returns`);
+  if (pinCheck.risk==='unknown') add('pin_code',w.unknownPin,'Pin code has no history yet');
+  else if (pinCheck.return_rate >= .30) add('pin_code',w.pinHigh,`Pin returns ${Math.round(pinCheck.return_rate*100)}% of COD orders`);
+  else if (pinCheck.return_rate >= .20) add('pin_code',w.pinMedium,`Pin returns ${Math.round(pinCheck.return_rate*100)}% of COD orders`);
+  const a=String(address).toLowerCase();
+  if(a.length<25)add('address',w.shortAddress,'Short address');
+  if(!/\d/.test(a))add('address',w.noHouseNumber,'No house number');
+  if(!['near','opp','behind','beside','landmark','flat','house','h.no','plot','floor','sector','lane','apartment','colony'].some(x=>a.includes(x)))add('address',w.noLandmark,'No landmark or locality marker');
+  const ph=String(phone).replace(/\D/g,'');
+  if(ph.length!==10||!['6','7','8','9'].includes(ph[0])||new Set(ph).size<=2||['9876543210','1234567890','0123456789'].includes(ph))add('phone_quality',w.fakePhone,'Phone number looks invalid or repetitive');
+  const name=String(buyerName).trim().toLowerCase();
+  if(name.length<3||['test','abc','xyz','asdf','qwerty','na','aaa'].includes(name)||!/[aeiou]/.test(name))add('name_quality',w.junkName,'Name needs verification');
+  if (amount > policy.highValueThreshold) add('order_value',w.highValue,`High value order: ₹${amount}`);
+  if (ordersSamePhoneToday >= policy.frequencyThreshold) add('phone_frequency',w.phoneFrequency,`${ordersSamePhoneToday} orders from this phone today`);
+  if(history.past_orders===0)add('buyer_history',w.firstTimeBuyer,'First-time buyer');
+  const score = Math.max(0, Math.min(100, breakdown.reduce((sum, b) => sum + b.points, 0)));
+  const level = score <= policy.lowMax ? 'LOW' : score <= policy.mediumMax ? 'MEDIUM' : 'HIGH';
   if (level === 'LOW') {
     reasons.length = 0;
-    reasons.push('Clear address, safe pin code, no return history');
+    reasons.push('Low combined risk. Human ship decision required.');
   }
-  return { level, rule, reasons };
+  const rule = `score ${score} -> ${level} (bands: LOW 0-${policy.lowMax}, MEDIUM ${policy.lowMax + 1}-${policy.mediumMax}, HIGH ${policy.mediumMax + 1}-100)`;
+  return { score, level, rule, reasons, breakdown };
 }
 
 /**

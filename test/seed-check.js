@@ -1,56 +1,18 @@
-// Runs the 5 seed orders through the pipeline and checks expected outcomes.
-// Forced into demo mode so it needs no API key and makes no network calls.
 import assert from 'node:assert/strict';
-delete process.env.ANTHROPIC_API_KEY;
+process.env.CODGUARD_DATA_FILE=':memory:';delete process.env.ANTHROPIC_API_KEY;
+const {createTenant,policyFor,setTenantPolicy}=await import('../src/tenants.js');const o=await import('../src/orders.js');const {feeFor,bandFor,validatePolicyPatch}=await import('../src/policyConfig.js');const {evaluateSellerRule}=await import('../src/policy.js');
+const t=createTenant({name:'Test'}),p=policyFor(t.id);await o.seed(t.id);
+const expected=[[0,'LOW'],[30,'MEDIUM'],[55,'HIGH'],[30,'MEDIUM'],[25,'LOW']];
+for(const [i,x]of o.listOrders(t.id).entries()){assert.equal(x.score,expected[i][0]);assert.equal(x.risk,expected[i][1]);assert.equal(x.status,'PENDING_REVIEW');assert.equal(x.decision,null);}
+for(const [score,fee,band]of [[0,0,'LOW'],[29,0,'LOW'],[30,0,'MEDIUM'],[49,0,'MEDIUM'],[50,49,'HIGH'],[69,49,'HIGH'],[70,99,'VERY_HIGH'],[84,99,'VERY_HIGH'],[85,149,'EXTREME'],[100,149,'EXTREME']]){assert.equal(feeFor(score,p),fee);assert.equal(bandFor(score,p),band);}
+for(const reply of ['confirm','paid','cancel','wrong_address','no_reply']){await o.seed(t.id);const x=await o.applyReply(t.id,'CG-1003',reply);assert.equal(x.status,'PENDING_REVIEW',reply);assert.equal(x.decision,null);}
+setTenantPolicy(t.id,{autoCancelSilent:false});await o.seed(t.id);await o.timeWarp(t.id,30);for(const x of o.listOrders(t.id)){assert.equal(x.status,'PENDING_REVIEW');assert.equal(x.decision,null);}assert.ok(o.getOrder(t.id,'CG-1003').silence_flagged_at);
+for(const action of ['ship','hold','cancel','ship']){const x=await o.applyAction(t.id,'CG-1003',{action});assert.equal(x.decision,action);assert.equal(x.status,{ship:'SHIPPED',hold:'HOLD',cancel:'CANCELLED'}[action]);}
+assert.ok(o.getOrder(t.id,'CG-1003').events.filter(e=>['ship','hold','cancel'].includes(e.type)).length>=4);
+assert.equal(evaluateSellerRule('block all buyers from Jaipur').accepted,false);
+const input={buyer_name:'Test Buyer',phone:'9810000001',pin:'560034',address:'Flat 4, Main Road, near bank',amount:900};const a=await o.runPipeline({...input,city:'Jaipur'},p),b=await o.runPipeline({...input,city:'Mumbai'},p);assert.equal(a.score.score,b.score.score);
+const high=await o.runPipeline({...input,amount:2500,orders_same_phone_today:3},p);assert.ok(high.score.breakdown.some(x=>x.signal==='order_value'));assert.ok(high.score.breakdown.some(x=>x.signal==='phone_frequency'));
+assert.throws(()=>validatePolicyPatch({},{veryHighMin:40}));assert.equal(validatePolicyPatch({},{feeExtreme:199}).feeExtreme,199);
+console.log('Seed, fee boundaries, human-final decisions, silence, configurable policy and fairness passed');
 
-const orders = await import('../src/orders.js');
-const { evaluateSellerRule } = await import('../src/policy.js');
-await orders.seed();
-const all = orders.listOrders();
-
-const expected = [
-  ['CG-1001', 'LOW', 'SHIPPED', 'full address, safe pin, no returns'],
-  ['CG-1002', 'HIGH', 'HOLD', 'vague address "Near temple, Hyd"'],
-  ['CG-1003', 'HIGH', 'HOLD', '2 past returns'],
-  ['CG-1004', 'MEDIUM', 'AWAITING_CONFIRMATION', 'good address, high-return pin'],
-  ['CG-1005', 'LOW', 'SHIPPED', 'city-block request refused; scored on own signals'],
-];
-console.log('\nSeed orders through the scorer:\n');
-for (const [id, risk, status, why] of expected) {
-  const o = orders.getOrder(id);
-  console.log(`${id}  ${o.risk.padEnd(6)} ${o.status.padEnd(22)} addr=${o.steps.address_check.address_quality.padEnd(5)} pin=${o.steps.pin_check.risk.padEnd(7)} returns=${o.steps.history.past_returns}  (${why})`);
-  assert.equal(o.risk, risk, `${id} risk`);
-  assert.equal(o.status, status, `${id} status`);
-}
-assert.equal(all.length, 5);
-
-// Seed 5: the blanket city rule is refused and the order is scored on its own signals.
-const o5 = orders.getOrder('CG-1005');
-assert.equal(o5.policy_notice.accepted, false);
-assert.equal(o5.policy_notice.code, 'blanket_group_rule');
-for (const t of ['Block all buyers from Jaipur', 'ban every customer in Bhiwandi', 'Reject all orders from this state', 'never ship to any community X'])
-  assert.equal(evaluateSellerRule(t).code, 'blanket_group_rule', t);
-
-// Fairness invariant: city/name are not scoring inputs - changing them cannot change the score.
-const base = { buyer_name: 'A B', phone: '9000000000', pin: '110096', address: 'H.No 23, Gali No 4, Shahdara Main Road, Delhi 110096', product: 'x', amount: 1200 };
-const a = await orders.runPipeline({ ...base, city: 'Jaipur' });
-const b = await orders.runPipeline({ ...base, city: 'Mumbai', buyer_name: 'Z Y' });
-assert.deepEqual(a.score, b.score);
-
-// Workflow: nothing auto-cancels; only a human can.
-const m = orders.getOrder('CG-1004');
-orders.applyReply('CG-1004', 'no_reply');
-assert.equal(m.status, 'HOLD');                                     // no reply -> HOLD, not cancelled
-const h = orders.getOrder('CG-1002');
-orders.applyReply('CG-1002', 'cancel');
-assert.equal(h.status, 'HOLD');                                     // buyer "cancel" -> HOLD for seller
-assert.throws(() => orders.applyAction('CG-1002', { action: 'override', to: 'ship' }), /note/); // override needs a reason
-orders.applyAction('CG-1002', { action: 'override', to: 'ship', note: 'Called buyer, address confirmed' });
-assert.equal(h.status, 'SHIPPED'); assert.ok(h.overridden);
-await orders.seed();
-orders.applyReply('CG-1004', 'paid');
-assert.equal(orders.getOrder('CG-1004').status, 'SHIPPED');         // MEDIUM + paid -> ships
-orders.applyReply('CG-1003', 'confirm');
-assert.equal(orders.getOrder('CG-1003').status, 'HOLD');            // HIGH never auto-ships
-assert.throws(() => orders.applyReply('CG-1001', 'confirm'));       // LOW has no WhatsApp message
-console.log('\nAll seed-order and invariant checks passed.\n');
+setTenantPolicy(t.id,{autoCancelSilent:true});await o.seed(t.id);await o.timeWarp(t.id,25);assert.equal(o.getOrder(t.id,'CG-1003').status,'CANCELLED');assert.equal(o.getOrder(t.id,'CG-1003').decision_by,'system');await o.seed(t.id);await o.applyAction(t.id,'CG-1003',{action:'hold'});await o.timeWarp(t.id,25);assert.equal(o.getOrder(t.id,'CG-1003').status,'HOLD');
