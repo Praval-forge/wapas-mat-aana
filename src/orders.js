@@ -216,17 +216,20 @@ export async function sweepSilence() {
     if (order.decision || !order.whatsapp_sent_at) continue;
     const policy=policyFor(order.tenant_id);
     const elapsedH=(nowMs-Date.parse(order.whatsapp_sent_at))/HOUR_MS;
+    // A recorded no_reply IS silence. Only an actual response (confirm, paid, cancel,
+    // wrong_address) or any human decision (checked above) prevents the silence outcome.
+    const silent=!order.buyer_reply||order.buyer_reply==='no_reply';
     if (!order.reminder_sent_at && elapsedH>=policy.reminderAfterHours) {
       order.reminder_sent_at=now();order.reminder=buildReminderMessage(order,order.risk);
       log(order,'reminder','One reminder generated (mock only). Human decision still required.');
       save();await dispatch(order.tenant_id,'order.reminded',order);
     }
-    if (policy.autoCancelSilent && policy.highSilentAction==='cancel' && order.commitment_fee_rs>0 && !order.buyer_reply && elapsedH>=24) {
+    if (policy.autoCancelSilent && policy.highSilentAction==='cancel' && order.commitment_fee_rs>0 && silent && elapsedH>=24) {
       order.decision='cancel';order.decision_by='system';order.decided_at=now();
       await transition(order,'CANCELLED','auto_cancel','System cancelled: 24 hours of buyer silence after an upfront request (brand toggle ON).','order.auto_cancelled');
       continue;
     }
-    if (!order.silence_flagged_at && !order.buyer_reply && elapsedH>=policy.highSilentAfterHours) {
+    if (!order.silence_flagged_at && silent && elapsedH>=policy.highSilentAfterHours) {
       order.silence_flagged_at=now();log(order,'silence','Buyer silence flagged for human review. No order status changed.');
       save();await dispatch(order.tenant_id,'order.review_required',order);
     }

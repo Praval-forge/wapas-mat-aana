@@ -16,3 +16,15 @@ assert.throws(()=>validatePolicyPatch({},{veryHighMin:40}));assert.equal(validat
 console.log('Seed, fee boundaries, human-final decisions, silence, configurable policy and fairness passed');
 
 setTenantPolicy(t.id,{autoCancelSilent:true});await o.seed(t.id);await o.timeWarp(t.id,25);assert.equal(o.getOrder(t.id,'CG-1003').status,'CANCELLED');assert.equal(o.getOrder(t.id,'CG-1003').decision_by,'system');await o.seed(t.id);await o.applyAction(t.id,'CG-1003',{action:'hold'});await o.timeWarp(t.id,25);assert.equal(o.getOrder(t.id,'CG-1003').status,'HOLD');
+
+// Recorded no_reply is silence, not a response: it must NOT prevent the 24h auto-cancel.
+setTenantPolicy(t.id,{autoCancelSilent:true});await o.seed(t.id);await o.applyReply(t.id,'CG-1003','no_reply');await o.timeWarp(t.id,25);
+{const x=o.getOrder(t.id,'CG-1003');assert.equal(x.status,'CANCELLED');assert.equal(x.decision,'cancel');assert.equal(x.decision_by,'system');assert.ok(x.events.some(e=>e.type==='auto_cancel'));}
+// Any actual buyer response prevents automatic cancellation.
+for(const reply of ['paid','confirm','cancel','wrong_address']){await o.seed(t.id);await o.applyReply(t.id,'CG-1003',reply);await o.timeWarp(t.id,25);const x=o.getOrder(t.id,'CG-1003');assert.equal(x.status,'PENDING_REVIEW',reply);assert.equal(x.decision,null,reply);}
+// A human decision always prevents it, even after a recorded no_reply.
+await o.seed(t.id);await o.applyReply(t.id,'CG-1003','no_reply');await o.applyAction(t.id,'CG-1003',{action:'ship'});await o.timeWarp(t.id,25);assert.equal(o.getOrder(t.id,'CG-1003').decision_by,'human');assert.equal(o.getOrder(t.id,'CG-1003').status,'SHIPPED');
+// No automatic shipping or holding: after the sweep, every order is undecided or system-CANCELLED (upfront-request only).
+await o.seed(t.id);for(const id of ['CG-1002','CG-1004'])await o.applyReply(t.id,id,'no_reply');await o.timeWarp(t.id,48);
+for(const x of o.listOrders(t.id)){if(x.decision===null){assert.equal(x.status,'PENDING_REVIEW');continue;}assert.equal(x.decision_by,'system');assert.equal(x.status,'CANCELLED');assert.ok(x.commitment_fee_rs>0);}
+console.log('no_reply-as-silence auto-cancel, response/human blocks, and no auto ship/hold passed');

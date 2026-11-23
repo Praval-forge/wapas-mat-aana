@@ -12,7 +12,7 @@ No API key or paid service is needed to run the demo. Copy `.env.example` only f
 
 Every order starts `PENDING_REVIEW`, including LOW and prepaid. The tool supplies `suggested_action`, not a final decision. The seller can manually **Ship / Hold / Cancel**, change their mind, or explicitly accept suggestions in bulk. Each action records `decision`, `decision_by`, `decided_at` and audit events.
 
-**One automatic exception, enabled by default:** an order asked to pay upfront is cancelled after 24 hours of buyer silence. A prior human decision or any recorded reply prevents this. Brands can disable `autoCancelSilent` or set `highSilentAction: hold` (suggest hold only). Every automatic cancellation is marked `decision_by: system`, includes a reason and emits `order.auto_cancelled`. No automatic shipping or holding occurs. The background sweep generates one mock reminder after 12 hours.
+**One automatic exception, enabled by default:** an order asked to pay upfront is cancelled after 24 hours of buyer silence. A prior human decision or an actual buyer response (confirm, paid, cancel, wrong_address) prevents this; a recorded no_reply counts as silence. Brands can disable `autoCancelSilent` or set `highSilentAction: hold` (suggest hold only). Every automatic cancellation is marked `decision_by: system`, includes a reason and emits `order.auto_cancelled`. No automatic shipping or holding occurs. The background sweep generates one mock reminder after 12 hours.
 
 ## Fee ladder
 
