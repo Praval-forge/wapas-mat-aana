@@ -2,8 +2,12 @@ import assert from 'node:assert/strict';
 process.env.CODGUARD_DATA_FILE=':memory:';delete process.env.ANTHROPIC_API_KEY;
 const {createTenant,policyFor,setTenantPolicy}=await import('../src/tenants.js');const o=await import('../src/orders.js');const {feeFor,bandFor,validatePolicyPatch}=await import('../src/policyConfig.js');const {evaluateSellerRule}=await import('../src/policy.js');
 const t=createTenant({name:'Test'}),p=policyFor(t.id);await o.seed(t.id);
-const expected=[[0,'LOW'],[30,'MEDIUM'],[55,'HIGH'],[30,'MEDIUM'],[25,'LOW']];
-for(const [i,x]of o.listOrders(t.id).entries()){assert.equal(x.score,expected[i][0]);assert.equal(x.risk,expected[i][1]);assert.equal(x.status,'PENDING_REVIEW');assert.equal(x.decision,null);}
+const expected={'CG-1001':[0,'LOW'],'CG-1002':[30,'MEDIUM'],'CG-1003':[55,'HIGH'],'CG-1004':[30,'MEDIUM'],'CG-1005':[25,'LOW']};
+for(const [id,[score,risk]]of Object.entries(expected)){const x=o.getOrder(t.id,id);assert.equal(x.score,score,id);assert.equal(x.risk,risk,id);}
+{const all=o.listOrders(t.id);assert.equal(all.length,40);assert.equal(all.filter(x=>x.payment_mode==='prepaid').length,6);assert.equal(all.filter(x=>x.payment_mode==='cod').length,34);
+for(const x of all){assert.equal(x.status,'PENDING_REVIEW');assert.equal(x.decision,null);}
+assert.deepEqual([...new Set(all.filter(x=>x.payment_mode==='cod').map(x=>x.risk_band))].sort(),['EXTREME','HIGH','LOW','MEDIUM','VERY_HIGH']);
+assert.ok(all.filter(x=>x.phone==='9810000130').every(x=>x.orders_same_phone_today===3),'same-phone seed examples rescored');}
 for(const [score,fee,band]of [[0,0,'LOW'],[29,0,'LOW'],[30,0,'MEDIUM'],[49,0,'MEDIUM'],[50,49,'HIGH'],[69,49,'HIGH'],[70,99,'VERY_HIGH'],[84,99,'VERY_HIGH'],[85,149,'EXTREME'],[100,149,'EXTREME']]){assert.equal(feeFor(score,p),fee);assert.equal(bandFor(score,p),band);}
 for(const reply of ['confirm','paid','cancel','wrong_address','no_reply']){await o.seed(t.id);const x=await o.applyReply(t.id,'CG-1003',reply);assert.equal(x.status,'PENDING_REVIEW',reply);assert.equal(x.decision,null);}
 setTenantPolicy(t.id,{autoCancelSilent:false});await o.seed(t.id);await o.timeWarp(t.id,30);for(const x of o.listOrders(t.id)){assert.equal(x.status,'PENDING_REVIEW');assert.equal(x.decision,null);}assert.ok(o.getOrder(t.id,'CG-1003').silence_flagged_at);

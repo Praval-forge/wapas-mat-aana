@@ -44,6 +44,23 @@ const T = createTenant({ name: 'llm test' }).id;
 await orders.createOrder(T, { buyer_name: 'Sneha Reddy', phone: '9810000002', pin: '500081', city: 'Hyderabad', address: 'Near temple, Hyd', product: 'x', amount: 1200 });
 assert.equal(calls.length, 1, 'exactly one LLM call per order');
 
+// Same-phone order on the same IST day: only the NEW order is checked; the earlier one is re-scored from cached evidence.
+calls.length = 0;
+await orders.createOrder(T, { buyer_name: 'Sneha Reddy', phone: '9810000002', pin: '500081', city: 'Hyderabad', address: 'Flat 4, Sector 2, Madhapur, Hyderabad 500081', product: 'y', amount: 900 });
+assert.equal(calls.length, 1, 'no extra LLM calls for re-scored prior orders');
+assert.equal(orders.listOrders(T)[0].orders_same_phone_today, 2);
+// Policy/settings rescoring and the 40-order seed never call the LLM.
+calls.length = 0;
+const { setTenantPolicy } = await import('../src/tenants.js');
+setTenantPolicy(T, { feeHigh: 59 });
+await orders.refreshTenantOrders(T, 'test');
+await orders.seed(createTenant({ name: 'seed llm' }).id);
+assert.equal(calls.length, 0, 'rescoring and seeding use cached / rule-based evidence');
+// A buyer address correction is new evidence: exactly one check for the new address.
+const fixMe = orders.listOrders(T)[0];
+await orders.buyerFixAddress(fixMe, 'Flat 21, Sector 5, Madhapur, near Inorbit Mall, Hyderabad 500081');
+assert.equal(calls.length, 1, 'one LLM call for the corrected address');
+
 // Failure and malformed output both fall back to rules, and the app keeps working.
 mode = 'garbage'; const g = await checkAddress('Flat 402, Sunrise Apartments, 5th Cross, Koramangala, Bengaluru'); assert.equal(g.source, 'rules'); assert.equal(g.address_quality, 'clear');
 mode = 'error'; const e = await checkAddress('Near temple, Hyd'); assert.equal(e.source, 'rules'); assert.equal(e.address_quality, 'vague');

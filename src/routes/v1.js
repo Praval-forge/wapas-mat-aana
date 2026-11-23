@@ -10,7 +10,7 @@ import { meter, usageForTenant, PLANS, policyFor, setTenantPolicy } from '../ten
 import { validatePolicyPatch, PolicyError } from '../policyConfig.js';
 import { registerWebhook, listWebhooks, deleteWebhook, listDeliveries, WebhookError, WEBHOOK_EVENTS } from '../webhooks.js';
 import { llmEnabled, MODEL } from '../addressLLM.js';
-import { RETURN_COST_RS, COMMITMENT_FEE_RS } from '../data.js';
+import { trustedBase } from '../publicBase.js';
 
 export const v1 = express.Router();
 
@@ -54,6 +54,8 @@ v1.post('/orders', scope('orders:write'), enforceOrderQuota, async (req, res) =>
       external_id: req.body?.external_id ?? req.body?.platform_order_id,
       idempotency_key: req.get('Idempotency-Key'),
       seller_request: req.body?.seller_request,
+      source: 'api',
+      public_base: trustedBase(req),
     });
     meter(req.keyRow.id, { order: true });
     res.status(201).json(created);
@@ -98,7 +100,7 @@ v1.get('/orders/:id', scope('orders:read'), (req, res) => {
 // The platform (or its WhatsApp provider) posts buyer reply events here.
 v1.post('/orders/:id/buyer-reply', scope('orders:action'), async (req, res) => {
   try {
-    res.json(await orders.applyReply(req.tenant.id, req.params.id, req.body?.reply));
+    res.json(await orders.applyReply(req.tenant.id, req.params.id, req.body?.reply, { source: 'api' }));
   } catch (e) {
     if (e instanceof orders.WorkflowError) return apiError(res, 400, 'workflow_error', e.message);
     throw e;
@@ -125,10 +127,11 @@ v1.post('/seller-rules', scope('orders:write'), (req, res) => {
 
 // Per-brand policy: read the effective policy, patch overrides.
 v1.get('/policy', scope('policy:manage'), (req, res) => res.json(policyFor(req.tenant.id)));
-v1.put('/policy', scope('policy:manage'), (req, res) => {
+v1.put('/policy', scope('policy:manage'), async (req, res) => {
   try {
     const overrides = validatePolicyPatch(req.tenant.policy_overrides, req.body ?? {});
     setTenantPolicy(req.tenant.id, overrides);
+    await orders.refreshTenantOrders(req.tenant.id, 'brand policy changed'); // cached evidence, no LLM calls
     res.json(policyFor(req.tenant.id));
   } catch (e) {
     if (e instanceof PolicyError) return apiError(res, 422, 'invalid_policy', e.message, e.problems);
@@ -138,8 +141,8 @@ v1.put('/policy', scope('policy:manage'), (req, res) => {
 
 // Brand settings used by message composition and illustrative savings estimates.
 v1.get('/settings', scope('policy:manage'), (req,res) => res.json(settingsFor(req.tenant.id)));
-v1.put('/settings', scope('policy:manage'), (req,res) => {
-  try { res.json(updateSettings(req.tenant.id,req.body ?? {})); }
+v1.put('/settings', scope('policy:manage'), async (req,res) => {
+  try { const out = updateSettings(req.tenant.id,req.body ?? {}); await orders.refreshTenantOrders(req.tenant.id, 'brand settings changed'); res.json(out); }
   catch(e) { apiError(res,400,'invalid_settings',e.message); }
 });
 v1.get('/orders/:id/suggestion', scope('orders:read'), (req,res) => {

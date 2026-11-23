@@ -20,10 +20,16 @@ import { getState, save, STORE_LOCATION } from './store.js';
 import { PLANS, getTenant } from './tenants.js';
 
 export const WEBHOOK_EVENTS = [
-  'order.scored', 'order.auto_cancelled', 'order.reply_received', 'order.review_required', // a new order was ingested and scored
-  'order.status_changed', // ship / hold / cancel transitions (buyer reply, silence sweep, seller action)
-  'order.overridden', // a seller overrode the system decision
-  'order.reminded', // the one reminder message was sent
+  'order.scored', // a new order was ingested and scored
+  'order.rescored', // score/band/fee changed (same-phone order, policy change, buyer address fix)
+  'order.reply_received', // buyer evidence recorded (confirm, paid, address_fixed, ...); never a decision
+  'order.reply_cleared', // seller cleared a mistaken reply
+  'order.review_required', // buyer silence flagged for a human
+  'order.reminded', // the one reminder message was generated
+  'order.status_changed', // human ship / hold / cancel
+  'order.overridden', // a seller overrode the suggestion (note required)
+  'order.decision_undone', // a seller undid a decision; order is back to PENDING_REVIEW
+  'order.auto_cancelled', // the only automatic action: 24h silent upfront request (brand toggle ON)
 ];
 
 const DELIVERY_LOG_CAP = 200;
@@ -171,6 +177,9 @@ function orderSummary(order) {
     risk: order.risk,
     risk_band: order.risk_band ?? null,
     commitment_fee_rs: order.commitment_fee_rs ?? 0,
+    pay_now_rs: order.pay_now_rs ?? null,
+    balance_at_delivery_rs: order.balance_at_delivery_rs ?? null,
+    payment: order.payment ? { type: order.payment.type, amount_rs: order.payment.amount_rs, balance_due_rs: order.payment.balance_due_rs, simulated: true } : null,
     status: order.status,
     // decision_by distinguishes a human seller ('human') from the 24h silent auto-cancel ('system').
     decision: order.decision ?? null,

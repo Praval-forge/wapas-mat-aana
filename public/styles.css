@@ -176,3 +176,55 @@ a { color: var(--accent); }
 .whatsapp pre{font-family:inherit;font-size:12px;line-height:1.65}.wordmark:before{content:"W";display:inline-flex;background:white;color:black;border-radius:5px;margin-right:12px;width:26px;height:26px;align-items:center;justify-content:center;font-size:17px}.panel{overflow-wrap:anywhere}
 
 .page{animation:none!important}.page.active{opacity:1!important;transform:none!important}
+
+/* ---------- v2.1: five-band ladder, per-order amounts, timeline, storefront, buyer page ---------- */
+:root{--b-low:#6b6b6b;--b-med:#111;--b-high:#f08c00;--b-vhigh:#ed210a;--b-ext:#8a0f2e;--b-pre:#4f6378}
+.band-LOW{--band:var(--b-low);--band-ink:#fff}.band-MEDIUM{--band:var(--b-med);--band-ink:#fff}.band-HIGH{--band:var(--b-high);--band-ink:#111}.band-VERY_HIGH{--band:var(--b-vhigh);--band-ink:#fff}.band-EXTREME{--band:var(--b-ext);--band-ink:#fff}.band-PREPAID{--band:var(--b-pre);--band-ink:#fff}
+.circle[class*="band-"]{background:var(--band);color:var(--band-ink)}
+.risk[class*="band-"]{background:var(--band);color:var(--band-ink)}
+.meter i[class*="band-"]{background:var(--band)}
+.band-text{font-style:normal;font-weight:700;color:var(--band)}.band-text.band-HIGH{color:#a35f00}
+.navlink{color:#fff;text-decoration:none;border:1px solid #353535;border-radius:30px;padding:10px 16px;font-size:12px;white-space:nowrap;display:inline-flex;align-items:center}.navlink:hover{background:#1c1c1c}
+.ladder{display:grid;grid-template-columns:150px repeat(5,minmax(0,1fr)) minmax(220px,1.4fr);gap:0;border-bottom:1px solid var(--line);background:#fafafa}
+.ladder-title{padding:12px 16px 12px 24px;display:flex;flex-direction:column;justify-content:center}.ladder-title b{font-size:13px}.ladder-title small{color:#777;font-size:11px}
+.rung{position:relative;padding:10px 12px 10px 16px;border-left:1px solid var(--line);display:flex;flex-direction:column;gap:1px;background:#fff}
+.rung::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--band)}
+.rung-range{font-size:11px;color:#666;font-variant-numeric:tabular-nums}.rung-name{font-size:12px;font-weight:700}.rung strong{font-size:20px;line-height:1.15}.rung small{font-size:10.5px;color:#777}
+.rung.active{background:var(--band);color:var(--band-ink);box-shadow:inset 0 -3px 0 rgba(0,0,0,.25)}.rung.active .rung-range,.rung.active small{color:inherit;opacity:.85}.rung.active::before{background:rgba(255,255,255,.6)}
+.ladder-now{padding:10px 18px;border-left:1px solid var(--line);font-size:12px;display:flex;align-items:center;line-height:1.5}
+.pay-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) minmax(0,1.6fr);border:1px solid var(--line);border-left:6px solid var(--band);border-radius:13px;margin:-8px 0 22px;overflow:hidden}
+.pay-strip>div{padding:12px 14px;border-right:1px solid var(--line)}.pay-strip>div:last-child{border-right:0}
+.pay-strip span{display:block;font-size:11px;color:#777;letter-spacing:.3px}.pay-strip b{display:block;font-size:19px;margin-top:2px}.pay-strip b small{font-size:11px;color:#777;font-weight:400;margin-left:2px}
+.decided-line{font-size:13px;margin:4px 0}
+.timeline-panel{grid-column:1/-1}.timeline{list-style:none;margin:0;padding:0;max-height:260px;overflow:auto}
+.timeline li{display:grid;grid-template-columns:54px 86px 1fr;gap:10px;padding:7px 0;border-bottom:1px dashed #e6e6e6;font-size:12px;line-height:1.5}
+.timeline time{color:#777;font-variant-numeric:tabular-nums}.timeline .who{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#555;background:#f2f2f2;border-radius:4px;padding:1px 6px;align-self:start;text-align:center}
+.timeline li.ev-auto_cancel .who,.timeline li.ev-rescore .who{background:#fff1e6;color:#8a3b00}.timeline li.ev-payment .who{background:#e9f7ef;color:#0b6b3a}.timeline li.ev-undo .who{background:#eef0ff;color:#3730a3}
+.csv-mode{display:flex;flex-direction:column;gap:6px;margin:6px 0 10px}.csv-mode label{display:flex;gap:8px;align-items:center;font-size:12px;color:#333;margin:0}.csv-mode input{width:auto;margin:0}
+.dropzone{border:2px dashed #cfcfcf;border-radius:12px;padding:18px;text-align:center;color:#555;font-size:13px;cursor:pointer;margin-bottom:10px}.dropzone.over{border-color:#111;background:#f5f5f5}.dropzone small{display:block;margin-top:6px;color:#111;font-weight:600}
+.data-table th{white-space:nowrap}.data-table td{font-size:12px;white-space:nowrap;padding:8px 10px}
+@media(max-width:1000px){.ladder{grid-template-columns:repeat(5,minmax(120px,1fr));overflow-x:auto}.ladder-title,.ladder-now{grid-column:1/-1;border-left:0}.pay-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.pay-strip .wide{grid-column:1/-1}.pay-strip>div{border-bottom:1px solid var(--line)}}
+@media(max-width:700px){.ladder{grid-template-columns:repeat(5,130px)}.timeline li{grid-template-columns:48px 1fr}.timeline .who{display:none}}
+
+/* storefront + buyer page (standalone pages) */
+.sandbox-banner{background:#fff4d6;color:#6b4a00;border:1px solid #f1d58a;border-radius:10px;padding:10px 14px;font-size:12.5px;font-weight:600;margin:16px 0}
+.store-main{max-width:1180px;margin:0 auto;padding:8px 24px 48px}.store-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(320px,1fr);gap:24px;align-items:start}
+.products{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.product{border:1px solid var(--line);border-radius:13px;padding:14px;text-align:left;background:#fff;border-radius:13px;display:flex;flex-direction:column;gap:4px;min-height:96px}
+.product b{font-size:14px}.product span{color:#666;font-size:12px}.product strong{font-size:17px;margin-top:auto}.product.selected{border-color:#111;box-shadow:inset 0 0 0 2px #111;background:#fafafa}
+.store-form{display:grid;grid-template-columns:1fr 1fr;gap:12px}.store-form .full{grid-column:1/-1}.store-form input,.store-form select,.store-form textarea{width:100%;border:1px solid #ddd;border-radius:7px;padding:10px;font:13px inherit}
+.pay-choice{display:flex;gap:10px}.pay-choice label{flex:1;border:1px solid #ddd;border-radius:9px;padding:10px;display:flex;gap:8px;align-items:center;font-size:13px;color:#111;margin:0}.pay-choice input{width:auto;margin:0}
+.result-card{border:1px solid var(--line);border-left:6px solid var(--band,#111);border-radius:13px;padding:18px;margin-top:16px}.result-card h3{margin:0 0 8px}
+.kv-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:10px 0}.kv-grid div{background:#fafafa;border-radius:9px;padding:10px}.kv-grid span{display:block;font-size:11px;color:#777}.kv-grid b{font-size:17px}
+.mini-ladder{list-style:none;padding:0;margin:10px 0;display:grid;gap:4px}.mini-ladder li{display:grid;grid-template-columns:62px 1fr 64px;gap:8px;align-items:center;font-size:12px;padding:6px 10px;border-radius:8px;background:#f6f6f6;border-left:5px solid var(--band)}
+.mini-ladder li b{font-variant-numeric:tabular-nums}.mini-ladder li.active{background:var(--band);color:var(--band-ink);font-weight:700}
+.buyer-body{background:#f6f6f4}.buyer-wrap{max-width:560px;margin:0 auto;padding:12px 18px 60px}
+.buyer-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px;margin-top:14px}.buyer-card h2{margin:0 0 8px;font-size:18px}
+.buyer-actions{display:grid;gap:10px;margin-top:14px}.buyer-actions button{padding:13px 16px;font-size:14px}
+.sheet-back{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:flex-end;justify-content:center;z-index:120}.sheet-back.open{display:flex}
+.sheet{background:#fff;width:min(560px,100%);border-radius:18px 18px 0 0;padding:20px 20px 26px;max-height:90vh;overflow:auto}
+.upi-list{display:grid;gap:8px;margin:12px 0}.upi-list label{display:flex;gap:10px;align-items:center;border:1px solid #ddd;border-radius:10px;padding:12px;font-size:14px;color:#111;margin:0}.upi-list input{width:auto;margin:0}
+.demo-tag{display:inline-block;background:#111;color:#fff;border-radius:5px;font-size:10px;font-weight:700;letter-spacing:.6px;padding:2px 6px;vertical-align:middle;margin-left:6px}
+.success{border-left:6px solid #00bd69}
+@media(max-width:900px){.store-grid{grid-template-columns:1fr}.products{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:1000px){.ladder-title,.ladder-now{position:sticky;left:0;max-width:100vw;box-sizing:border-box}.ladder-now span{white-space:normal}}

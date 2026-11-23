@@ -1,51 +1,57 @@
-// Step 5 - plain-code WhatsApp message text (mock send: only rendered in the UI).
-// v2: the message depends on the tier. MEDIUM asks for a free "Reply YES"
-// confirmation; HIGH asks for the refundable Rs 50 commitment fee.
-// A real integration would send through the WhatsApp Business API; nothing
-// here makes network calls.
-import { COMMITMENT_FEE_RS } from './data.js';
+// Step 5 - plain-code WhatsApp message text. Nothing here sends anything: the
+// dashboard shows the text and a person may open a prefilled chat and press
+// Send themselves.
+//
+// The message follows the order's band on the five-band ladder:
+//   LOW              -> no message
+//   MEDIUM           -> free confirmation ("reply YES" or confirm on the buyer page)
+//   HIGH / VERY_HIGH -> refundable upfront amount, adjusted against the amount due on delivery
+//   EXTREME          -> same, plus the demo option to pay fully online at 5% off
+// Links point at the order's own buyer page (order.buyer_url), built from the
+// trusted public base URL. Payments in this sandbox are simulated.
+import { FULL_ONLINE_DISCOUNT_PCT } from './policyConfig.js';
+
+const round2 = (n) => Math.round(n * 100) / 100;
+const inr = (n) => `₹${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+const firstName = (order) => String(order.buyer_name ?? '').split(' ')[0] || 'there';
+
+function upfrontLines(order) {
+  const fee = order.commitment_fee_rs ?? 0;
+  const lines = [
+    `To confirm, please pay a refundable ${inr(fee)} upfront here: ${order.buyer_url}`,
+    `It is adjusted against your amount due on delivery (you pay ${inr(round2(order.amount - fee))} at the door).`,
+  ];
+  if (order.risk_band === 'EXTREME') {
+    const discount = round2((order.amount * FULL_ONLINE_DISCOUNT_PCT) / 100);
+    lines.push(`Or pay the full amount online at ${FULL_ONLINE_DISCOUNT_PCT}% off (${inr(round2(order.amount - discount))}) on the same page.`);
+  }
+  lines.push('Demo sandbox: no real payment is collected.');
+  return lines;
+}
 
 export function buildWhatsAppMessage(order, level, addressCheck, brandName = 'our store') {
-  if (level === 'LOW') return null;
-  const first = order.buyer_name.split(' ')[0];
-  const lines = [`Hi ${first}! Thanks for your order ${order.id} (${order.product}, ₹${order.amount}, Cash on Delivery).`];
-
-  if (addressCheck.address_quality !== 'clear') {
-    lines.push(
-      `We want your parcel to reach you the first time, but your delivery address looks incomplete: "${order.address}". ` +
-        'Please reply with your full address (house/flat no., street, area, pin code and a landmark).'
-    );
+  if (level === 'LOW' || order.payment_mode === 'prepaid') return null;
+  const lines = [`Hi ${firstName(order)}! Thanks for your order ${order.id} (${order.product}, ${inr(order.amount)}, Cash on Delivery).`];
+  if (addressCheck?.address_quality && addressCheck.address_quality !== 'clear') {
+    lines.push(`Your delivery address looks incomplete: "${order.address}". Please correct it here: ${order.buyer_url}`);
   }
-
-  if (level === 'MEDIUM') {
-    lines.push('To dispatch your order, please reply *YES* to confirm your COD order.');
-    lines.push('If we do not hear from you, we will remind you once, and then the store will decide how to proceed. Reply *CANCEL* if you no longer want it.');
+  if ((order.commitment_fee_rs ?? 0) > 0) {
+    lines.push(...upfrontLines(order));
   } else {
-    const payLink = `https://pay.wapas-mat-aana.example/${order.id}`; // placeholder link - no real payments
-    lines.push(
-      `To dispatch your order, please pay a refundable ₹${order.commitment_fee_rs ?? COMMITMENT_FEE_RS} commitment fee: ${payLink} ` +
-        '(adjusted against your bill on delivery).'
-    );
-    lines.push('Reply *CANCEL* if you no longer want it.');
+    lines.push(`Please confirm your COD order here: ${order.buyer_url} (or reply *YES*). There is nothing to pay now.`);
+    lines.push('If we do not hear from you, we will remind you once, and then the store will decide how to proceed.');
   }
-  lines.push('Or ask the store about paying fully online (demo option; no real payment is collected here).');
+  lines.push('Reply *CANCEL* if you no longer want it.');
   lines.push(`- ${brandName}`);
   return lines.join('\n');
 }
 
-/** The single reminder, sent once after the policy's reminder window. */
-export function buildReminderMessage(order, level) {
-  const first = order.buyer_name.split(' ')[0];
-  if (level === 'MEDIUM') {
-    return (
-      `Hi ${first}, a gentle reminder about your order ${order.id} (${order.product}, ₹${order.amount}, Cash on Delivery). ` +
-      'Please reply *YES* to confirm so we can dispatch it. Reply *CANCEL* if you no longer want it.'
-    );
+/** The single reminder, generated once after the policy's reminder window. */
+export function buildReminderMessage(order, level, brandName = 'our store') {
+  if (level === 'LOW' || order.payment_mode === 'prepaid') return null;
+  const head = `Hi ${firstName(order)}, a reminder about your order ${order.id} (${order.product}, ${inr(order.amount)}, Cash on Delivery).`;
+  if ((order.commitment_fee_rs ?? 0) > 0) {
+    return [head, ...upfrontLines(order), 'If we do not hear from you, the order may be cancelled. Reply *CANCEL* if you no longer want it.', `- ${brandName}`].join('\n');
   }
-  const payLink = `https://pay.wapas-mat-aana.example/${order.id}`; // placeholder link - no real payments
-  return (
-    `Hi ${first}, a final reminder about your order ${order.id} (${order.product}, ₹${order.amount}, Cash on Delivery). ` +
-    `Please pay the refundable ₹${order.commitment_fee_rs ?? COMMITMENT_FEE_RS} commitment fee to confirm: ${payLink}. ` +
-    'If we do not hear from you, the order may be cancelled. Reply *CANCEL* if you no longer want it.'
-  );
+  return [head, `Please confirm here: ${order.buyer_url} (or reply *YES*). Nothing to pay now. Reply *CANCEL* if you no longer want it.`, `- ${brandName}`].join('\n');
 }

@@ -1,6 +1,6 @@
 {
   "name": "wapas-mat-aana",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "COD return-risk scoring API + dashboard for Indian D2C and delivery platforms. Plain code + exactly one LLM call (address quality).",
   "type": "module",
   "main": "src/server.js",
@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node test/seed-check.js && node test/llm-path.js && node --test test/api.test.js && node --test test/features.test.js"
+    "test": "node test/seed-check.js && node test/llm-path.js && node --test test/api.test.js && node --test test/features.test.js && node --test test/v21.test.js"
   },
   "license": "MIT",
   "private": true,

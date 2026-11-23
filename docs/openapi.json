@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Wapas Mat Aana API",
-    "version": "2.0.0",
-    "description": "Wapas Mat Aana. API-key-authenticated, tenant-isolated scoring with human-final decisions. One exception: silent upfront-request orders may auto-cancel after 24h when the per-brand toggle is ON. Fees: 50\u201369 \u20b949, 70\u201384 \u20b999, 85+ \u20b9149. No real payments or automated WhatsApp sending."
+    "version": "2.1.0",
+    "description": "Wapas Mat Aana. API-key-authenticated, tenant-isolated COD risk scoring with human-final decisions on a five-band ladder (LOW 0-29 \u20b90 no confirmation; MEDIUM 30-49 \u20b90 free YES confirmation; HIGH 50-69 \u20b949; VERY_HIGH 70-84 \u20b999; EXTREME 85-100 \u20b9149, upfront amounts adjusted against the amount due on delivery and never above the order value). One exception: silent upfront-request orders may auto-cancel after 24h when the per-brand toggle is ON; any human action or real buyer reply preempts it. Endpoints tagged 'Demo (unauthenticated sandbox)' belong to the shared public demo: buyer links are bearer capabilities, the Shopify route is a simulator (not an authenticated Shopify webhook), payments are simulated and no money is collected. Free-tier hosting storage is ephemeral."
   },
   "servers": [
     {
@@ -25,6 +25,10 @@
     },
     {
       "name": "Meta"
+    },
+    {
+      "name": "Demo (unauthenticated sandbox)",
+      "description": "Public shared demo only. Fake data. No authentication except bearer buyer links. Not for production integrations; use /v1 with an API key."
     }
   ],
   "components": {
@@ -160,7 +164,8 @@
               "LOW",
               "MEDIUM",
               "HIGH"
-            ]
+            ],
+            "description": "Coarse tier (HIGH covers scores above mediumMax). Use risk_band for the five-band ladder."
           },
           "reasons": {
             "type": "array",
@@ -171,11 +176,12 @@
           "status": {
             "type": "string",
             "enum": [
+              "PENDING_REVIEW",
               "SHIPPED",
-              "AWAITING_CONFIRMATION",
               "HOLD",
               "CANCELLED"
-            ]
+            ],
+            "description": "Every order starts PENDING_REVIEW. Only a human sets SHIPPED/HOLD/CANCELLED, except the 24h silent upfront auto-cancel (decision_by=system)."
           },
           "whatsapp": {
             "type": "string",
@@ -183,7 +189,16 @@
           },
           "buyer_reply": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "enum": [
+              "confirm",
+              "paid",
+              "cancel",
+              "no_reply",
+              "wrong_address",
+              "address_fixed",
+              null
+            ]
           },
           "overridden": {
             "type": "boolean"
@@ -218,10 +233,97 @@
             "type": "string"
           },
           "commitment_fee_rs": {
-            "type": "integer"
+            "type": "number",
+            "description": "Upfront amount requested by the band; never above the order value; frozen once a payment is recorded"
           },
           "risk_band": {
+            "type": "string",
+            "enum": [
+              "LOW",
+              "MEDIUM",
+              "HIGH",
+              "VERY_HIGH",
+              "EXTREME"
+            ]
+          },
+          "risk_band_label": {
             "type": "string"
+          },
+          "pay_now_rs": {
+            "type": "number",
+            "description": "What the buyer is asked to pay now (0 for LOW/MEDIUM/prepaid)"
+          },
+          "balance_at_delivery_rs": {
+            "type": "number",
+            "description": "Order value minus the upfront amount (or recorded payment)"
+          },
+          "decided_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "seed",
+              "dashboard",
+              "api",
+              "csv",
+              "storefront",
+              "shopify_demo"
+            ]
+          },
+          "orders_same_phone_today": {
+            "type": "integer",
+            "description": "Orders from this phone for this tenant on the same IST calendar day"
+          },
+          "buyer_path": {
+            "type": "string",
+            "example": "/buyer/3Jx...",
+            "description": "Bearer capability: anyone holding it can view the narrow buyer page and record buyer evidence. Share only with the buyer."
+          },
+          "buyer_url": {
+            "type": "string",
+            "description": "buyer_path on the trusted public base (PUBLIC_BASE_URL, RENDER_EXTERNAL_URL or the request origin)"
+          },
+          "payment": {
+            "type": "object",
+            "nullable": true,
+            "description": "Simulated payment record. No money is collected.",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "upfront",
+                  "full_online"
+                ]
+              },
+              "amount_rs": {
+                "type": "number"
+              },
+              "discount_rs": {
+                "type": "number"
+              },
+              "balance_due_rs": {
+                "type": "number"
+              },
+              "app": {
+                "type": "string"
+              },
+              "reference": {
+                "type": "string"
+              },
+              "simulated": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              },
+              "recorded_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
           }
         }
       },
@@ -406,9 +508,15 @@
               "type": "string",
               "enum": [
                 "order.scored",
+                "order.rescored",
+                "order.reply_received",
+                "order.reply_cleared",
+                "order.review_required",
+                "order.reminded",
                 "order.status_changed",
                 "order.overridden",
-                "order.reminded"
+                "order.decision_undone",
+                "order.auto_cancelled"
               ]
             }
           },
@@ -605,7 +713,7 @@
         "tags": [
           "Orders"
         ],
-        "summary": "Post a buyer reply event (from your WhatsApp provider)",
+        "summary": "Record buyer evidence (never ships, holds or cancels)",
         "parameters": [
           {
             "name": "id",
@@ -633,9 +741,11 @@
                       "paid",
                       "cancel",
                       "no_reply",
-                      "wrong_address"
+                      "wrong_address",
+                      "address_fixed",
+                      "clear"
                     ],
-                    "description": "confirm = buyer replied YES; paid = commitment fee paid; cancel = buyer replied CANCEL; no_reply = buyer stayed silent through the policy window"
+                    "description": "confirm = buyer replied YES; paid = upfront amount reported paid (records a simulated payment once); cancel = buyer asked to cancel (suggestion only); wrong_address; address_fixed; no_reply = silence (does not prevent the auto-cancel); clear = seller clears a mistaken reply (refused once a payment is recorded; counts as a human review)."
                   }
                 }
               }
@@ -664,7 +774,7 @@
         "tags": [
           "Orders"
         ],
-        "summary": "Human seller action: ship | hold | cancel | override",
+        "summary": "Human seller action: ship | hold | cancel | override | undo",
         "parameters": [
           {
             "name": "id",
@@ -691,7 +801,8 @@
                       "ship",
                       "hold",
                       "cancel",
-                      "override"
+                      "override",
+                      "undo"
                     ]
                   },
                   "to": {
@@ -727,7 +838,7 @@
             }
           }
         },
-        "description": "Human-final action: ship, hold, cancel. Records decision_by=human and an audit event. override requires a note."
+        "description": "Human-final action: ship, hold, cancel; override requires a note; undo clears the decision and returns the order to PENDING_REVIEW (audited, order.decision_undone webhook) and never triggers an automatic decision. Any of these preempts the silent auto-cancel."
       }
     },
     "/v1/seller-rules": {
@@ -845,9 +956,15 @@
                       "type": "string",
                       "enum": [
                         "order.scored",
+                        "order.rescored",
+                        "order.reply_received",
+                        "order.reply_cleared",
+                        "order.review_required",
+                        "order.reminded",
                         "order.status_changed",
                         "order.overridden",
-                        "order.reminded"
+                        "order.decision_undone",
+                        "order.auto_cancelled"
                       ]
                     }
                   }
@@ -1026,6 +1143,380 @@
           },
           "404": {
             "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/buyer/{token}": {
+      "get": {
+        "tags": [
+          "Demo (unauthenticated sandbox)"
+        ],
+        "security": [],
+        "summary": "Narrow buyer view (bearer link). No tenant, score, events, phone or decision data.",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "description": "192-bit random bearer token from buyer_path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Buyer view: brand, product, value, address, band, pay now, balance, ladder, allowed actions"
+          },
+          "404": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/buyer/{token}/confirm": {
+      "post": {
+        "tags": [
+          "Demo (unauthenticated sandbox)"
+        ],
+        "security": [],
+        "summary": "Buyer confirms (evidence only; seller still decides)",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "description": "192-bit random bearer token from buyer_path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recorded"
+          },
+          "400": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Order cancelled: read-only"
+          }
+        }
+      }
+    },
+    "/api/buyer/{token}/address": {
+      "post": {
+        "tags": [
+          "Demo (unauthenticated sandbox)"
+        ],
+        "security": [],
+        "summary": "Buyer corrects the address: one address check for the new text, rescore, audit; any human decision is kept",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "description": "192-bit random bearer token from buyer_path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "address"
+                ],
+                "properties": {
+                  "address": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 500
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved"
+          },
+          "400": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Order cancelled"
+          },
+          "429": {
+            "description": "Correction limit (3) reached"
+          }
+        }
+      }
+    },
+    "/api/buyer/{token}/pay": {
+      "post": {
+        "tags": [
+          "Demo (unauthenticated sandbox)"
+        ],
+        "security": [],
+        "summary": "SIMULATED payment (no money collected). upfront = band fee adjusted against delivery; full_online = 5% off, EXTREME band only. Idempotent: a second call returns the recorded payment.",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "description": "192-bit random bearer token from buyer_path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "upfront",
+                      "full_online"
+                    ]
+                  },
+                  "app": {
+                    "type": "string",
+                    "enum": [
+                      "gpay",
+                      "phonepe",
+                      "paytm",
+                      "bhim",
+                      "other_upi"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded (or already_recorded=true). The message says the seller still reviews; it never promises shipment."
+          },
+          "400": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Order cancelled"
+          }
+        }
+      }
+    },
+    "/api/webhooks/shopify/orders-create": {
+      "post": {
+        "tags": [
+          "Demo (unauthenticated sandbox)"
+        ],
+        "security": [],
+        "summary": "DEMO SIMULATOR for a Shopify-shaped orders/create payload. NOT an authenticated Shopify webhook (no HMAC, no shop auth). Feeds the shared demo tenant only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "line_items",
+                  "shipping_address",
+                  "total_price"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "total_price": {
+                    "type": "string"
+                  },
+                  "gateway": {
+                    "type": "string"
+                  },
+                  "payment_gateway_names": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "financial_status": {
+                    "type": "string"
+                  },
+                  "source_name": {
+                    "type": "string"
+                  },
+                  "customer": {
+                    "type": "object"
+                  },
+                  "shipping_address": {
+                    "type": "object"
+                  },
+                  "line_items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Order created: order_id, score, risk_band, pay_now_rs, balance_at_delivery_rs, fee_ladder, buyer_path, dashboard_path"
+          },
+          "200": {
+            "description": "Replay of the same payload id"
+          },
+          "400": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/import": {
+      "post": {
+        "tags": [
+          "Demo (unauthenticated sandbox)"
+        ],
+        "security": [],
+        "summary": "Demo CSV import (demo tenant only). append adds valid rows; replace requires confirm=\"REPLACE\", validates every row first and deletes nothing if any row is invalid.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "orders": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "append",
+                      "replace"
+                    ]
+                  },
+                  "confirm": {
+                    "type": "string",
+                    "enum": [
+                      "REPLACE"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Row results"
+          },
+          "400": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }

@@ -1,6 +1,8 @@
 // Steps 2 and 4 of the pipeline: plain code, no AI.
-// v2: every COD order is scored on ALL three signals and combined into a
-// 0-100 score. The pin code is one input, never a gate that skips the rest.
+// Every COD order is scored on all signals (buyer history, pin return rate,
+// address, phone/name flags, value, same-phone frequency) and combined into a
+// 0-100 score that maps to the five-band ladder. The pin code is one input,
+// never a gate that skips the rest.
 import { PIN_TABLE, PIN_THRESHOLDS, BUYER_HISTORY } from './data.js';
 
 /** Step 2a - pin-code risk from the lookup table. */

@@ -9,22 +9,27 @@ try { process.loadEnvFile(path.join(import.meta.dirname, '..', '.env')); } catch
 
 const { llmEnabled, MODEL } = await import('./addressLLM.js');
 const orders = await import('./orders.js');
-const { PIN_TABLE, RETURN_COST_RS, COMMITMENT_FEE_RS } = await import('./data.js');
+const { PIN_TABLE, BUYER_HISTORY, RETURN_COST_RS } = await import('./data.js');
 const { validateOrder } = await import('./validate.js');
 const { v1 } = await import('./routes/v1.js');
 const { admin } = await import('./routes/admin.js');
 const { ensureDemoTenant, DEMO_API_KEY } = await import('./demoTenant.js');
-const { validatePolicyPatch } = await import('./policyConfig.js');
-const { policyFor, setTenantPolicy } = await import('./tenants.js');
+const { validatePolicyPatch, ladderFor, FULL_ONLINE_DISCOUNT_PCT } = await import('./policyConfig.js');
+const { policyFor, setTenantPolicy, getTenant } = await import('./tenants.js');
 const { saveNow, STORE_LOCATION } = await import('./store.js');
 const { settingsFor, updateSettings } = await import('./settings.js');
 const { apiError } = await import('./auth.js');
+const { trustedBase } = await import('./publicBase.js');
+const { mapShopifyOrder } = await import('./shopifyDemo.js');
+
+const PUBLIC_DIR = path.join(import.meta.dirname, '..', 'public');
 
 export const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '200kb' }));
 
 // Security headers + per-request id and a one-line access log on the APIs.
+// Referrer-Policy no-referrer also keeps buyer-link tokens out of Referer headers.
 app.use((req, res, next) => {
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('X-Frame-Options', 'DENY');
@@ -39,55 +44,81 @@ app.use((req, res, next) => {
   }
   next();
 });
-app.use(express.static(path.join(import.meta.dirname, '..', 'public')));
+app.use(express.static(PUBLIC_DIR));
 
 const demoTenantId = () => ensureDemoTenant().tenant.id;
 
-// Tiny in-memory rate limit for endpoints that can trigger the (paid) LLM call.
+// Tiny in-memory rate limit for public demo endpoints that create or change data.
 const hits = new Map();
 function limit(req, res, next) {
   const key = req.ip;
   const t = Date.now();
   const recent = (hits.get(key) ?? []).filter((x) => t - x < 60_000);
-  if (recent.length >= 30) return apiError(res, 429, 'rate_limited', 'Too many requests, slow down.');
+  const max = Number(process.env.CODGUARD_DEMO_RATE_LIMIT) || 30; // per IP per minute
+  if (recent.length >= max) return apiError(res, 429, 'rate_limited', 'Too many requests, slow down.');
   recent.push(t);
   hits.set(key, recent);
   next();
+}
+
+function workflow(fn) {
+  return async (req, res) => {
+    try {
+      res.json(await fn(req));
+    } catch (e) {
+      if (e instanceof orders.BuyerError) return apiError(res, e.status, e.code, e.message);
+      if (e instanceof orders.WorkflowError) return apiError(res, 400, 'workflow_error', e.message, e.details);
+      throw e;
+    }
+  };
 }
 
 /* ---------- demo dashboard API (no key; operates on the built-in demo tenant) ---------- */
 
 app.get('/api/meta', (_req, res) => {
   const { tenant } = ensureDemoTenant();
+  const policy = policyFor(tenant.id);
   res.json({
-    version: '2.0',
+    version: '2.1',
     mode: llmEnabled() ? 'llm' : 'demo',
     model: llmEnabled() ? MODEL : null,
     return_cost_rs: RETURN_COST_RS,
-    commitment_fee_rs: COMMITMENT_FEE_RS,
+    fee_ladder: ladderFor(policy),
+    full_online_discount_pct: FULL_ONLINE_DISCOUNT_PCT,
     known_pins: Object.keys(PIN_TABLE),
     demo_tenant_id: tenant.id,
     demo_api_key: DEMO_API_KEY, // sandbox test key, published on purpose
-    policy: policyFor(tenant.id),
+    policy,
     store: STORE_LOCATION === ':memory:' ? 'in-memory' : 'file',
   });
 });
 
-app.get('/api/settings', (_req,res) => res.json(settingsFor(demoTenantId())));
-app.put('/api/settings', (req,res) => { try { res.json(updateSettings(demoTenantId(),req.body ?? {})); } catch(e) { apiError(res,400,'invalid_settings',e.message); } });
-app.post('/api/demo/bulk', limit, async (req,res) => { try { res.json(await orders.bulkAction(demoTenantId(),req.body?.action)); } catch(e) { apiError(res,400,'invalid_action',e.message); } });
-app.post('/api/import', limit, async (req,res) => {
-  const rows = req.body?.orders;
-  if (!Array.isArray(rows) || rows.length > 100) return apiError(res,400,'invalid_import','orders must be an array with at most 100 rows');
-  const results=[];
-  for (const [i,row] of rows.entries()) {
-    const {order,problems}=validateOrder(row);
-    if(problems) {results.push({row:i+1,errors:problems});continue;}
-    try { const o=await orders.createOrder(demoTenantId(),order,{external_id:row.order_id});results.push({row:i+1,id:o.id}); }
-    catch(e) { results.push(e instanceof orders.IdempotentReplay ? {row:i+1,id:e.order.id,replayed:true} : {row:i+1,errors:[e.message]}); }
-  }
-  res.json({results});
+// Read-only reference data behind the demo scores (all synthetic / illustrative).
+app.get('/api/reference', (_req, res) => {
+  res.json({
+    notice: 'Illustrative synthetic data. Not real statistics or real people.',
+    pin_table: Object.entries(PIN_TABLE).map(([pin, r]) => ({ pin, area: r.area, return_rate: r.returnRate, sample_orders: r.orders })),
+    demo_buyer_history: Object.entries(BUYER_HISTORY).map(([phone, h]) => ({ phone, ...h })),
+    fee_ladder: ladderFor(policyFor(demoTenantId())),
+  });
 });
+
+app.get('/api/settings', (_req, res) => res.json(settingsFor(demoTenantId())));
+app.put('/api/settings', async (req, res) => {
+  try {
+    const out = updateSettings(demoTenantId(), req.body ?? {});
+    await orders.refreshTenantOrders(demoTenantId(), 'brand settings changed'); // re-render messages, cached evidence
+    res.json(out);
+  } catch (e) {
+    apiError(res, 400, 'invalid_settings', e.message);
+  }
+});
+app.post('/api/demo/bulk', limit, async (req, res) => {
+  try { res.json(await orders.bulkAction(demoTenantId(), req.body?.action)); } catch (e) { apiError(res, 400, 'invalid_action', e.message); }
+});
+app.post('/api/import', limit, workflow((req) =>
+  orders.importOrders(demoTenantId(), req.body?.orders, { mode: req.body?.mode ?? 'append', confirm: req.body?.confirm, public_base: trustedBase(req) })
+));
 app.get('/api/orders', (_req, res) => res.json(orders.listOrders(demoTenantId())));
 app.get('/api/orders/:id', (req, res) => {
   const o = orders.getOrder(demoTenantId(), req.params.id);
@@ -97,40 +128,33 @@ app.get('/api/orders/:id', (req, res) => {
 app.post('/api/orders', limit, async (req, res) => {
   const { order, problems } = validateOrder(req.body);
   if (problems) return apiError(res, 400, 'invalid_order', problems.join('; '));
-  res.status(201).json(await orders.createOrder(demoTenantId(), order, { seller_request: req.body?.seller_request }));
+  res.status(201).json(await orders.createOrder(demoTenantId(), order, { seller_request: req.body?.seller_request, source: 'dashboard', public_base: trustedBase(req) }));
 });
 
 app.post('/api/score', limit, async (req, res) => {
   const { order, problems } = validateOrder(req.body);
   if (problems) return apiError(res, 400, 'invalid_order', problems.join('; '));
   const r = await orders.runPipeline(order, policyFor(demoTenantId()));
-  res.json({
-    score: r.score.score,
-    risk: r.score.level,
-    rule: r.score.rule,
-    reasons: r.score.reasons,
-    breakdown: r.score.breakdown,
-    steps: { pin_check: r.pinCheck, history: r.history, address_check: r.addressCheck },
-  });
+  res.json({ score: r.score.score, risk: r.score.level, rule: r.score.rule, reasons: r.score.reasons, breakdown: r.score.breakdown, steps: { pin_check: r.pinCheck, history: r.history, address_check: r.addressCheck } });
 });
 
-function workflow(fn) {
-  return async (req, res) => {
-    try {
-      res.json(await fn(req));
-    } catch (e) {
-      if (e instanceof orders.WorkflowError) return apiError(res, 400, 'workflow_error', e.message);
-      throw e;
-    }
-  };
-}
 app.post('/api/orders/:id/action', workflow((req) => orders.applyAction(demoTenantId(), req.params.id, req.body ?? {})));
-app.post('/api/orders/:id/reply', workflow((req) => orders.applyReply(demoTenantId(), req.params.id, req.body?.reply)));
+app.post('/api/orders/:id/reply', workflow((req) => orders.applyReply(demoTenantId(), req.params.id, req.body?.reply, { source: req.body?.reply === 'clear' ? 'dashboard' : 'simulation' })));
 
 // Demo clock: skip ahead to watch the reminder and silence policy fire.
 app.post('/api/demo/advance', workflow((req) => orders.timeWarp(demoTenantId(), req.body?.hours ?? 13)));
 
-app.put('/api/policy',(req,res)=>{try{const id=demoTenantId();const patch=validatePolicyPatch({},req.body??{});setTenantPolicy(id,patch);res.json(policyFor(id));}catch(e){apiError(res,400,'invalid_policy',e.message);}});
+app.put('/api/policy', async (req, res) => {
+  try {
+    const id = demoTenantId();
+    const patch = validatePolicyPatch(getTenant(id).policy_overrides, req.body ?? {}); // merge, never wipe other overrides
+    setTenantPolicy(id, patch);
+    await orders.refreshTenantOrders(id, 'brand policy changed');
+    res.json(policyFor(id));
+  } catch (e) {
+    apiError(res, 400, 'invalid_policy', e.message);
+  }
+});
 app.get('/api/policy', (_req, res) => res.json(policyFor(demoTenantId())));
 
 // Seller rule requests: blanket group rules are refused; nothing is ever stored as a rule.
@@ -141,10 +165,72 @@ app.post('/api/seller-rules', (req, res) => {
   res.status(422).json(orders.submitSellerRule(demoTenantId(), text));
 });
 
-app.post('/api/reset', limit, async (_req, res) => {
-  await orders.seed(demoTenantId());
+app.post('/api/reset', limit, async (req, res) => {
+  await orders.seed(demoTenantId(), { public_base: trustedBase(req) });
   res.json({ ok: true, count: orders.listOrders(demoTenantId()).length });
 });
+
+/* ---------- DEMO Shopify-shaped ingestion (simulator, NOT an authenticated Shopify webhook) ---------- */
+
+app.post('/api/webhooks/shopify/orders-create', limit, async (req, res) => {
+  res.set('X-WMA-Demo-Simulator', 'true');
+  const mapped = mapShopifyOrder(req.body);
+  if (mapped.problems) return apiError(res, 400, 'invalid_order', 'The Shopify-shaped payload is invalid.', mapped.problems);
+  const shape = (o, replayed) => ({
+    simulator: true,
+    notice: 'Demo simulator: not an authenticated Shopify webhook. Shared public sandbox, fake data only, no real purchase.',
+    replayed,
+    order_id: o.id,
+    external_id: o.external_id,
+    score: o.score,
+    risk_band: o.risk_band,
+    risk_band_label: o.risk_band_label,
+    payment_mode: o.payment_mode,
+    order_value_rs: o.amount,
+    pay_now_rs: o.pay_now_rs,
+    balance_at_delivery_rs: o.balance_at_delivery_rs,
+    fee_ladder: o.payment_mode === 'prepaid' ? [] : ladderFor(policyFor(o.tenant_id)),
+    buyer_path: o.buyer_path,
+    dashboard_path: `/?order=${encodeURIComponent(o.id)}`,
+  });
+  try {
+    const o = await orders.createOrder(demoTenantId(), mapped.order, { external_id: mapped.external_id, source: mapped.source, public_base: trustedBase(req) });
+    res.status(201).json(shape(o, false));
+  } catch (e) {
+    if (e instanceof orders.IdempotentReplay) return res.status(200).json(shape(e.order, true));
+    throw e;
+  }
+});
+
+/* ---------- buyer pages: bearer-token capability, narrow view only ---------- */
+
+function buyerRoute(fn) {
+  return async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const order = orders.findByToken(req.params.token);
+    if (!order) return apiError(res, 404, 'not_found', 'This buyer link is not valid.');
+    try {
+      res.json(await fn(order, req));
+    } catch (e) {
+      if (e instanceof orders.BuyerError) return apiError(res, e.status, e.code, e.message);
+      if (e instanceof orders.WorkflowError) return apiError(res, 400, 'workflow_error', e.message);
+      throw e;
+    }
+  };
+}
+app.get('/api/buyer/:token', buyerRoute((o) => orders.buyerView(o)));
+app.post('/api/buyer/:token/confirm', limit, buyerRoute((o) => orders.buyerConfirm(o)));
+app.post('/api/buyer/:token/address', limit, buyerRoute((o, req) => orders.buyerFixAddress(o, req.body?.address)));
+app.post('/api/buyer/:token/pay', limit, buyerRoute((o, req) => orders.buyerPay(o, { type: req.body?.type, app: req.body?.app })));
+
+const NOT_FOUND_BUYER = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Link not valid</title><link rel="stylesheet" href="/styles.css"></head>
+<body class="buyer-body"><main class="buyer-wrap"><div class="sandbox-banner">DEMO · shared sandbox · fake data only</div><h1>This buyer link is not valid</h1><p class="hint">Check the link in your message, or contact the store.</p></main></body></html>`;
+app.get('/buyer/:token', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!orders.findByToken(req.params.token)) return res.status(404).type('html').send(NOT_FOUND_BUYER);
+  res.sendFile(path.join(PUBLIC_DIR, 'buyer.html'));
+});
+app.get('/store', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'storefront.html')));
 
 /* ---------- platform API + admin console ---------- */
 
@@ -185,11 +271,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT) || 3000;
   const sweep = setInterval(() => orders.sweepSilence().catch((e) => console.warn('[sweep]', e.message)), 60_000);
   sweep.unref();
-  process.on('SIGTERM', () => saveNow());
-  process.on('SIGINT', () => { saveNow(); process.exit(0); });
+  // Persist, then exit (Render sends SIGTERM on deploy/restart).
+  for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { saveNow(); process.exit(0); });
   app.listen(port, () => {
-    console.log(`Wapas Mat Aana v2 at http://localhost:${port}  (API docs: http://localhost:${port}/docs)`);
+    console.log(`Wapas Mat Aana v2.1 at http://localhost:${port}  (API docs: http://localhost:${port}/docs, test store: /store)`);
     console.log(llmEnabled() ? `Address check: LLM (${MODEL})` : 'Address check: DEMO MODE (rule-based; set ANTHROPIC_API_KEY to enable the LLM)');
-    console.log(`Store: ${STORE_LOCATION}`);
+    console.log(`Store: ${STORE_LOCATION} · buyer links use ${trustedBase()}`);
   });
 }

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test store · Wapas Mat Aana demo</title>
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛍️</text></svg>">
+</head>
+<body>
+<header class="wma-header"><div class="wordmark">Chhaya Threads<span>Test store · demo</span></div><nav><a class="navlink" href="/">← Back to dashboard</a></nav></header>
+<main class="store-main">
+  <div class="sandbox-banner">DEMO TEST STORE · Shared public sandbox · Use fake data only · No real purchase, no payment, nothing ships. Orders go to the demo dashboard through a Shopify-shaped simulator (not a real Shopify webhook).</div>
+  <div class="store-grid">
+    <section>
+      <h2>1 · Pick a product</h2>
+      <div class="products" id="products"></div>
+    </section>
+    <section>
+      <h2>2 · Checkout</h2>
+      <div class="row"><span class="hint" style="margin:0">Sample fills (synthetic):</span><button type="button" data-fill="safe">Safe buyer</button><button type="button" data-fill="risky">Risky buyer</button><button type="button" data-fill="fake">Fake-looking</button></div>
+      <form id="checkout" class="store-form" autocomplete="off">
+        <div><label>First name</label><input name="first_name" required maxlength="40"></div>
+        <div><label>Last name</label><input name="last_name" maxlength="40"></div>
+        <div><label>Phone (10 digits, fake only)</label><input name="phone" required inputmode="numeric" maxlength="14"></div>
+        <div><label>City / pin code</label><select name="pin" id="pinSelect" required></select></div>
+        <div class="full"><label>Delivery address</label><textarea name="address" rows="2" required maxlength="300"></textarea></div>
+        <div class="full"><label>Payment</label><div class="pay-choice"><label><input type="radio" name="payment" value="cod" checked> Cash on Delivery</label><label><input type="radio" name="payment" value="prepaid"> Prepaid (simulated)</label></div></div>
+        <div class="full"><button class="primary" type="submit" id="placeOrder">Place demo order</button> <span class="hint" id="selectedProduct"></span></div>
+      </form>
+      <div id="result" aria-live="polite"></div>
+    </section>
+  </div>
+</main>
+<div id="toasts"></div>
+<script src="/storefront.js"></script>
+</body>
+</html>
